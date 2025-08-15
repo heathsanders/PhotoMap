@@ -1,50 +1,130 @@
-# Welcome to your Expo app 👋
+# PhotoMap - Privacy-First Photo Organization
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A React Native/Expo app that organizes your photos and videos into virtual albums based on date and location. All processing happens on-device - your photos never leave your phone.
 
-## Get started
+## Features
 
-1. Install dependencies
+### Free Tier
+- 📅 **Timeline View**: Browse photos organized by date
+- 🗺️ **Map View**: See photo locations on an interactive map
+- 📱 **Album Grids**: View photos in responsive grids
+- 🔍 **Media Viewer**: Fullscreen photo/video viewing
+- 🗑️ **Manual Delete**: Multi-select photos for deletion
+- 🌙 **Dark Theme**: Beautiful dark interface
 
+### Pro Features
+- 🎯 **Adjustable Clustering**: Customize cluster radius and minimum photos
+- 🏷️ **Location Names**: POI and city names instead of coordinates
+- 📊 **Batch Actions**: Share, favorite, and organize multiple photos
+- 🧹 **Smart Cleanup**: Quick filters for screenshots, large videos, duplicates
+- ✏️ **Rename Clusters**: Give your photo albums custom names
+- 🎨 **Themes & Colors**: Light/dark themes and custom accent colors
+- 📈 **Detailed Metadata**: Full EXIF data and location preview
+- 🗺️ **Trip View**: Group photos across multiple days for trips
+
+## Technical Architecture
+
+### Core Technologies
+- **Expo SDK**: Cross-platform React Native framework
+- **SQLite**: Local database for metadata storage
+- **DBSCAN**: Clustering algorithm for location grouping
+- **react-native-maps**: Interactive map functionality
+- **expo-media-library**: Photo/video access and management
+
+### Key Services
+- **MediaLibraryService**: Handles photo library access and permissions
+- **DatabaseService**: SQLite operations for metadata storage
+- **ClusteringService**: DBSCAN implementation for location clustering
+- **MediaProcessorService**: Orchestrates scanning and organization
+
+### Privacy & Security
+- ✅ All processing happens on-device
+- ✅ No cloud upload of photos
+- ✅ Metadata stored locally in SQLite
+- ✅ Optional reverse geocoding with offline mode
+- ✅ System-level permission handling
+
+## Development Setup
+
+1. **Install dependencies**:
    ```bash
    npm install
    ```
 
-2. Start the app
-
+2. **Start development server**:
    ```bash
-   npx expo start
+   npm run ios     # iOS simulator
+   npm run android # Android emulator
+   npm run web     # Web browser
    ```
 
-In the output, you'll find options to open the app in a
+3. **Required permissions**:
+   - iOS: NSPhotoLibraryUsageDescription
+   - Android: READ_EXTERNAL_STORAGE, ACCESS_MEDIA_LOCATION
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Project Structure
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+```
+src/
+├── components/          # Reusable UI components
+│   ├── AlbumGrid.tsx   # Photo grid with multi-select
+│   ├── MediaViewer.tsx # Fullscreen photo/video viewer
+│   └── UpgradeModal.tsx # Pro upgrade interface
+├── services/           # Core business logic
+│   ├── database.ts     # SQLite operations
+│   ├── mediaLibrary.ts # Photo library access
+│   ├── clustering.ts   # DBSCAN clustering
+│   └── mediaProcessor.ts # Main orchestration
+├── types/              # TypeScript definitions
+└── utils/              # Helper functions
 
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+app/
+├── (tabs)/             # Main tab navigation
+│   ├── index.tsx       # Timeline view
+│   ├── map.tsx         # Map view
+│   └── settings.tsx    # Settings & Pro features
+└── _layout.tsx         # Root navigation
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Data Models
 
-## Learn more
+### MediaAsset
+- Metadata extracted from photos/videos
+- GPS coordinates, timestamps, file info
+- Stored locally, never uploaded
 
-To learn more about developing your project with Expo, look at the following resources:
+### Cluster
+- Groups of photos taken at similar locations
+- DBSCAN algorithm with configurable radius
+- Labeled with POI names or coordinates
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### DayGroup
+- Photos organized by capture date
+- Contains multiple location clusters
+- Majority location determines day label
 
-## Join the community
+## Performance Considerations
 
-Join our community of developers creating universal apps.
+- **Incremental Indexing**: Only scan new/changed photos
+- **Thumbnail Caching**: Smooth scrolling in grids
+- **Lazy Loading**: Large albums load on demand
+- **Batch Processing**: Deletion in chunks ≤200 items
+- **Background Processing**: Non-blocking UI during scans
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Monetization Strategy
+
+**Freemium model** with strategic feature gating:
+- Core organization features remain free
+- Advanced customization and convenience in Pro
+- Clear upgrade prompts with feature benefits
+- 7-day free trial with subscription tiers
+
+## Platform Compatibility
+
+- **iOS**: 14+ (supports limited library access)
+- **Android**: 10+ (scoped storage compatibility)
+- **Web**: Progressive web app fallback
+
+---
+
+Built with privacy-first principles - your photos stay on your device, always.
