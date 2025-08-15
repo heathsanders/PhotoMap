@@ -30,6 +30,7 @@ class DatabaseService {
           cluster_id TEXT,
           filename TEXT NOT NULL,
           file_size INTEGER,
+          hidden INTEGER DEFAULT 0,
           created_at INTEGER DEFAULT (strftime('%s', 'now'))
         );
       `);
@@ -76,6 +77,15 @@ class DatabaseService {
       } catch (error) {
         // Column likely already exists, ignore error
         console.log('cluster_id column already exists or other ALTER error:', error);
+      }
+
+      // Add hidden column if it doesn't exist (for existing databases)
+      try {
+        await this.db.execAsync(`ALTER TABLE media_assets ADD COLUMN hidden INTEGER DEFAULT 0;`);
+        console.log('Added hidden column to existing media_assets table');
+      } catch (error) {
+        // Column likely already exists, ignore error
+        console.log('hidden column already exists or other ALTER error:', error);
       }
       
       // Create indexes for performance
@@ -129,6 +139,7 @@ class DatabaseService {
     const query = `
       SELECT * FROM media_assets 
       WHERE date(taken_at / 1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
+      AND (hidden IS NULL OR hidden = 0)
       ORDER BY taken_at ASC
     `;
     
@@ -170,7 +181,8 @@ class DatabaseService {
   async getClustersByDate(date: string): Promise<Cluster[]> {
     const query = `
       SELECT * FROM clusters 
-      WHERE day_date = ?
+      WHERE day_date = ? 
+      AND asset_count > 0
       ORDER BY asset_count DESC
     `;
     
@@ -179,7 +191,10 @@ class DatabaseService {
     
     for (const row of result) {
       const cluster = await this.mapRowToClusterWithAssets(row);
-      clusters.push(cluster);
+      // Double check that cluster actually has visible assets
+      if (cluster.assets.length > 0) {
+        clusters.push(cluster);
+      }
     }
     
     return clusters;
@@ -210,12 +225,19 @@ class DatabaseService {
     
     for (const row of result) {
       const clusters = await this.getClustersByDate(row.date as string);
-      dayGroups.push({
-        date: row.date as string,
-        city: row.city as string || undefined,
-        totalAssets: row.total_assets as number,
-        clusters
-      });
+      
+      // Only include day groups that have at least one cluster with assets
+      if (clusters.length > 0) {
+        // Recalculate total assets based on actual visible assets
+        const totalAssets = clusters.reduce((sum, cluster) => sum + cluster.assets.length, 0);
+        
+        dayGroups.push({
+          date: row.date as string,
+          city: row.city as string || undefined,
+          totalAssets,
+          clusters
+        });
+      }
     }
     
     return dayGroups;
@@ -225,6 +247,94 @@ class DatabaseService {
     const placeholders = assetIds.map(() => '?').join(',');
     const query = `DELETE FROM media_assets WHERE id IN (${placeholders})`;
     await this.db.runAsync(query, assetIds);
+  }
+
+  async hideMediaAssets(assetIds: string[]): Promise<void> {
+    const placeholders = assetIds.map(() => '?').join(',');
+    const query = `UPDATE media_assets SET hidden = 1 WHERE id IN (${placeholders})`;
+    await this.db.runAsync(query, assetIds);
+  }
+
+  async unhideMediaAssets(assetIds: string[]): Promise<void> {
+    const placeholders = assetIds.map(() => '?').join(',');
+    const query = `UPDATE media_assets SET hidden = 0 WHERE id IN (${placeholders})`;
+    await this.db.runAsync(query, assetIds);
+  }
+
+  async updateClusterAssetCounts(): Promise<void> {
+    // Update all cluster asset counts based on actual non-hidden assets
+    const query = `
+      UPDATE clusters 
+      SET asset_count = (
+        SELECT COUNT(*) 
+        FROM media_assets 
+        WHERE media_assets.cluster_id = clusters.id 
+        AND (media_assets.hidden IS NULL OR media_assets.hidden = 0)
+      )
+    `;
+    await this.db.runAsync(query);
+  }
+
+  async updateClusterAssetCount(clusterId: string): Promise<void> {
+    // Update specific cluster asset count based on actual non-hidden assets
+    const query = `
+      UPDATE clusters 
+      SET asset_count = (
+        SELECT COUNT(*) 
+        FROM media_assets 
+        WHERE media_assets.cluster_id = ? 
+        AND (media_assets.hidden IS NULL OR media_assets.hidden = 0)
+      )
+      WHERE id = ?
+    `;
+    await this.db.runAsync(query, [clusterId, clusterId]);
+  }
+
+  async removeEmptyClusters(): Promise<void> {
+    // Remove clusters that have no visible assets
+    const query = `
+      DELETE FROM clusters 
+      WHERE asset_count = 0 OR id NOT IN (
+        SELECT DISTINCT cluster_id 
+        FROM media_assets 
+        WHERE cluster_id IS NOT NULL 
+        AND (hidden IS NULL OR hidden = 0)
+      )
+    `;
+    await this.db.runAsync(query);
+  }
+
+  async removeEmptyCluster(clusterId: string): Promise<boolean> {
+    // Check if cluster is empty and remove it
+    const countQuery = `
+      SELECT COUNT(*) as count 
+      FROM media_assets 
+      WHERE cluster_id = ? 
+      AND (hidden IS NULL OR hidden = 0)
+    `;
+    const result = await this.db.getFirstAsync(countQuery, [clusterId]);
+    const assetCount = (result as any)?.count || 0;
+    
+    if (assetCount === 0) {
+      const deleteQuery = `DELETE FROM clusters WHERE id = ?`;
+      await this.db.runAsync(deleteQuery, [clusterId]);
+      return true; // Cluster was deleted
+    }
+    
+    return false; // Cluster still has assets
+  }
+
+  async removeEmptyDayGroups(): Promise<void> {
+    // Remove day groups that have no clusters with visible assets
+    const query = `
+      DELETE FROM day_groups 
+      WHERE date NOT IN (
+        SELECT DISTINCT day_date 
+        FROM clusters 
+        WHERE asset_count > 0
+      )
+    `;
+    await this.db.runAsync(query);
   }
 
   async cacheGeocode(key: string, label: string, city?: string): Promise<void> {
@@ -301,6 +411,7 @@ class DatabaseService {
     const query = `
       SELECT * FROM media_assets 
       WHERE cluster_id = ?
+      AND (hidden IS NULL OR hidden = 0)
       ORDER BY taken_at ASC
     `;
     
@@ -324,6 +435,7 @@ class DatabaseService {
         AND date(taken_at / 1000, 'unixepoch', 'localtime') = ?
         AND lat BETWEEN ? AND ?
         AND lon BETWEEN ? AND ?
+        AND (hidden IS NULL OR hidden = 0)
       ORDER BY taken_at ASC
     `;
     

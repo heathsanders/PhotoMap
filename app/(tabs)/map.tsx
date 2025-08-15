@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { databaseService } from '../../src/services/database';
 import { Cluster } from '../../src/types';
 
@@ -37,11 +37,14 @@ export default function MapScreen() {
     longitudeDelta: 0.0421,
   });
 
-  useEffect(() => {
-    loadClusters();
-  }, []);
+  // Load clusters on focus (handles both initial load and refresh from album)
+  useFocusEffect(
+    useCallback(() => {
+      loadClusters();
+    }, [loadClusters])
+  );
 
-  const loadClusters = async () => {
+  const loadClusters = useCallback(async () => {
     try {
       setLoading(true);
       
@@ -89,7 +92,7 @@ export default function MapScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateVisibleClusters = (region: typeof mapRegion) => {
     // Filter clusters that are within the visible region

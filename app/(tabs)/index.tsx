@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert, Modal, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { mediaLibraryService } from '../../src/services/mediaLibrary';
 import { databaseService } from '../../src/services/database';
 import { mediaProcessorService } from '../../src/services/mediaProcessor';
@@ -47,6 +47,15 @@ export default function TimelineScreen() {
     
     return () => clearInterval(interval);
   }, [backgroundProcessing, showProgressModal]);
+
+  // Refresh data when screen comes back into focus (e.g., returning from album)
+  useFocusEffect(
+    useCallback(() => {
+      if (hasPermission && !loading && !showProgressModal && !backgroundProcessing) {
+        loadDayGroups();
+      }
+    }, [hasPermission, loading, showProgressModal, backgroundProcessing])
+  );
 
   const checkBackgroundProcessing = async () => {
     try {

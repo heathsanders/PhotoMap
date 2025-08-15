@@ -14,12 +14,20 @@ export default function AlbumScreen() {
   const handleBack = () => {
     router.back();
   };
+
+  const handleAssetsChanged = () => {
+    // Navigate back and trigger a refresh of the parent timeline
+    router.back();
+    // Note: We're navigating back immediately so the user sees the updated timeline
+    // The timeline component should refresh its data when it regains focus
+  };
   
   return (
     <AlbumGrid
       cluster={cluster}
       dayGroup={dayGroup}
       onBack={handleBack}
+      onAssetsChanged={handleAssetsChanged}
     />
   );
 }
