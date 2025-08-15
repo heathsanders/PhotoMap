@@ -195,17 +195,17 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
         setAssets(prevAssets => prevAssets.filter(asset => !asset.selected));
         setMultiSelectMode(false);
         
-        // Notify parent component that assets have changed
-        onAssetsChanged?.();
-        
         // If cluster was deleted, clean up empty day groups and navigate back immediately
         if (clusterDeleted) {
           await databaseService.removeEmptyDayGroups();
-          Alert.alert('Success', `Deleted ${result.deletedIds.length} items. This location cluster has been removed.`, [
-            { text: 'OK', onPress: () => onAssetsChanged?.() }
-          ]);
+          // Notify parent component that assets have changed and navigate back
+          onAssetsChanged?.();
+          Alert.alert('Success', `Deleted ${result.deletedIds.length} items. This location cluster has been removed.`);
           return; // Skip the normal success alert
         }
+        
+        // Notify parent component that assets have changed
+        onAssetsChanged?.();
         
         Alert.alert('Success', `Deleted ${result.deletedIds.length} items`);
       } else if (result.deletedIds.length > 0) {
@@ -223,17 +223,17 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
         );
         setMultiSelectMode(false);
         
-        // Notify parent component that assets have changed
-        onAssetsChanged?.();
-        
         // If cluster was deleted, clean up empty day groups and show special message
         if (clusterDeleted) {
           await databaseService.removeEmptyDayGroups();
-          Alert.alert('Partial Success', `Deleted ${result.deletedIds.length} of ${assetIds.length} items. This location cluster has been removed.`, [
-            { text: 'OK', onPress: () => onAssetsChanged?.() }
-          ]);
+          // Notify parent component that assets have changed and navigate back
+          onAssetsChanged?.();
+          Alert.alert('Partial Success', `Deleted ${result.deletedIds.length} of ${assetIds.length} items. This location cluster has been removed.`);
           return; // Skip the normal partial success alert
         }
+        
+        // Notify parent component that assets have changed
+        onAssetsChanged?.();
         
         Alert.alert(
           'Partial Success',
@@ -272,17 +272,17 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
           prevAssets.filter(asset => !result.deletedIds.includes(asset.id))
         );
         
-        // Notify parent component that assets have changed
-        onAssetsChanged?.();
-        
         // If cluster was deleted, clean up empty day groups and navigate back
         if (clusterDeleted) {
           await databaseService.removeEmptyDayGroups();
-          Alert.alert('Success', `Deleted ${result.deletedIds.length} additional items. This location cluster has been removed.`, [
-            { text: 'OK', onPress: () => onAssetsChanged?.() }
-          ]);
+          // Notify parent component that assets have changed and navigate back
+          onAssetsChanged?.();
+          Alert.alert('Success', `Deleted ${result.deletedIds.length} additional items. This location cluster has been removed.`);
           return; // Skip the normal success alert
         }
+        
+        // Notify parent component that assets have changed
+        onAssetsChanged?.();
         
         Alert.alert('Success', `Deleted ${result.deletedIds.length} additional items`);
       }
@@ -388,17 +388,17 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
               setAssets(prevAssets => prevAssets.filter(asset => !asset.selected));
               setMultiSelectMode(false);
               
-              // Notify parent component that assets have changed
-              onAssetsChanged?.();
-              
               // If cluster was deleted, clean up empty day groups and navigate back
               if (clusterDeleted) {
                 await databaseService.removeEmptyDayGroups();
-                Alert.alert('Success', `Hidden ${selectedAssets.length} items. This location cluster has been removed.`, [
-                  { text: 'OK', onPress: () => onAssetsChanged?.() }
-                ]);
+                // Notify parent component that assets have changed and navigate back
+                onAssetsChanged?.();
+                Alert.alert('Success', `Hidden ${selectedAssets.length} items. This location cluster has been removed.`);
                 return; // Skip the normal success alert
               }
+              
+              // Notify parent component that assets have changed
+              onAssetsChanged?.();
               
               Alert.alert('Success', `Hidden ${selectedAssets.length} items`);
             } catch (error) {

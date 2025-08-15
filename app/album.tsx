@@ -17,9 +17,19 @@ export default function AlbumScreen() {
 
   const handleAssetsChanged = () => {
     // Navigate back and trigger a refresh of the parent timeline
-    router.back();
-    // Note: We're navigating back immediately so the user sees the updated timeline
-    // The timeline component should refresh its data when it regains focus
+    // Use replace instead of back to avoid navigation stack issues
+    try {
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        // Fallback: navigate to timeline if can't go back
+        router.replace('/(tabs)/');
+      }
+    } catch (error) {
+      console.error('Navigation error:', error);
+      // Fallback navigation
+      router.replace('/(tabs)/');
+    }
   };
   
   return (
