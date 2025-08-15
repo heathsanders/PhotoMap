@@ -128,7 +128,7 @@ class DatabaseService {
   async getMediaAssetsByDateRange(startDate: string, endDate: string): Promise<MediaAsset[]> {
     const query = `
       SELECT * FROM media_assets 
-      WHERE date(taken_at, 'unixepoch', 'localtime') BETWEEN ? AND ?
+      WHERE date(taken_at / 1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
       ORDER BY taken_at ASC
     `;
     
@@ -137,13 +137,14 @@ class DatabaseService {
   }
 
   async insertCluster(cluster: Cluster): Promise<void> {
-    const query = `
+    // Insert or update cluster record
+    const clusterQuery = `
       INSERT OR REPLACE INTO clusters 
       (id, day_date, centroid_lat, centroid_lon, label, radius, asset_count)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
     
-    await this.db.runAsync(query, [
+    await this.db.runAsync(clusterQuery, [
       cluster.id,
       cluster.dayDate,
       cluster.centroidLat,
@@ -152,6 +153,18 @@ class DatabaseService {
       cluster.radius,
       cluster.assets.length
     ]);
+    
+    // Update cluster_id for all assets in this cluster
+    if (cluster.assets.length > 0) {
+      const updateAssetsQuery = `
+        UPDATE media_assets 
+        SET cluster_id = ? 
+        WHERE id IN (${cluster.assets.map(() => '?').join(',')})
+      `;
+      
+      const assetIds = cluster.assets.map(asset => asset.id);
+      await this.db.runAsync(updateAssetsQuery, [cluster.id, ...assetIds]);
+    }
   }
 
   async getClustersByDate(date: string): Promise<Cluster[]> {
@@ -295,6 +308,63 @@ class DatabaseService {
     return result.map(row => this.mapRowToMediaAsset(row));
   }
 
+  async getAssetsByLocationAndDate(
+    centroidLat: number, 
+    centroidLon: number, 
+    dayDate: string, 
+    radiusMeters: number
+  ): Promise<MediaAsset[]> {
+    // Convert radius from meters to approximate degrees (rough approximation)
+    // 1 degree ≈ 111,320 meters at equator
+    const radiusDegrees = radiusMeters / 111320;
+    
+    const query = `
+      SELECT * FROM media_assets 
+      WHERE lat IS NOT NULL AND lon IS NOT NULL
+        AND date(taken_at / 1000, 'unixepoch', 'localtime') = ?
+        AND lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+      ORDER BY taken_at ASC
+    `;
+    
+    const result = await this.db.getAllAsync(query, [
+      dayDate,
+      centroidLat - radiusDegrees,
+      centroidLat + radiusDegrees,
+      centroidLon - radiusDegrees,
+      centroidLon + radiusDegrees
+    ]);
+    
+    return result.map(row => this.mapRowToMediaAsset(row));
+  }
+
+  async getAssetsByLocation(
+    centroidLat: number, 
+    centroidLon: number, 
+    radiusMeters: number
+  ): Promise<MediaAsset[]> {
+    // Convert radius from meters to approximate degrees (rough approximation)
+    // 1 degree ≈ 111,320 meters at equator
+    const radiusDegrees = radiusMeters / 111320;
+    
+    const query = `
+      SELECT * FROM media_assets 
+      WHERE lat IS NOT NULL AND lon IS NOT NULL
+        AND lat BETWEEN ? AND ?
+        AND lon BETWEEN ? AND ?
+      ORDER BY taken_at ASC
+    `;
+    
+    const result = await this.db.getAllAsync(query, [
+      centroidLat - radiusDegrees,
+      centroidLat + radiusDegrees,
+      centroidLon - radiusDegrees,
+      centroidLon + radiusDegrees
+    ]);
+    
+    return result.map(row => this.mapRowToMediaAsset(row));
+  }
+
   async getAllClustersForMap(): Promise<Cluster[]> {
     const query = `
       SELECT * FROM clusters 
@@ -337,6 +407,60 @@ class DatabaseService {
       
     } catch (error) {
       console.error('Error verifying cluster relationships:', error);
+    }
+  }
+
+  async repairClusterAssetRelationships(): Promise<void> {
+    try {
+      console.log('Starting cluster-asset relationship repair...');
+      
+      // Get all clusters
+      const clusters = await this.db.getAllAsync('SELECT * FROM clusters');
+      let repairedCount = 0;
+      
+      for (const clusterRow of clusters) {
+        // For each cluster, find assets by location and date
+        const radiusDegrees = clusterRow.radius / 111320; // Convert meters to degrees
+        
+        const assets = await this.db.getAllAsync(`
+          SELECT id FROM media_assets 
+          WHERE lat IS NOT NULL AND lon IS NOT NULL
+            AND date(taken_at / 1000, 'unixepoch', 'localtime') = ?
+            AND lat BETWEEN ? AND ?
+            AND lon BETWEEN ? AND ?
+        `, [
+          clusterRow.day_date,
+          clusterRow.centroid_lat - radiusDegrees,
+          clusterRow.centroid_lat + radiusDegrees,
+          clusterRow.centroid_lon - radiusDegrees,
+          clusterRow.centroid_lon + radiusDegrees
+        ]);
+        
+        if (assets.length > 0) {
+          // Update cluster_id for found assets
+          const updateQuery = `
+            UPDATE media_assets 
+            SET cluster_id = ? 
+            WHERE id IN (${assets.map(() => '?').join(',')})
+          `;
+          
+          const assetIds = assets.map((asset: any) => asset.id);
+          await this.db.runAsync(updateQuery, [clusterRow.id, ...assetIds]);
+          
+          // Update cluster asset_count
+          await this.db.runAsync(
+            'UPDATE clusters SET asset_count = ? WHERE id = ?',
+            [assets.length, clusterRow.id]
+          );
+          
+          repairedCount++;
+          console.log(`Repaired cluster ${clusterRow.id}: ${assets.length} assets assigned`);
+        }
+      }
+      
+      console.log(`Repair complete: ${repairedCount} clusters repaired`);
+    } catch (error) {
+      console.error('Error repairing cluster relationships:', error);
     }
   }
 

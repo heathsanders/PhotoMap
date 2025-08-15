@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert, Modal, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { mediaLibraryService } from '../../src/services/mediaLibrary';
 import { databaseService } from '../../src/services/database';
 import { mediaProcessorService } from '../../src/services/mediaProcessor';
 import { DayGroup } from '../../src/types';
 
 export default function TimelineScreen() {
+  const router = useRouter();
   const [dayGroups, setDayGroups] = useState<DayGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasPermission, setHasPermission] = useState(false);
@@ -253,7 +255,7 @@ export default function TimelineScreen() {
             </View>
           ) : (
             dayGroups.map((dayGroup) => (
-              <DayGroupCard key={dayGroup.date} dayGroup={dayGroup} />
+              <DayGroupCard key={dayGroup.date} dayGroup={dayGroup} router={router} />
             ))
           )}
         </ScrollView>
@@ -297,9 +299,10 @@ export default function TimelineScreen() {
 
 interface DayGroupCardProps {
   dayGroup: DayGroup;
+  router: any;
 }
 
-function DayGroupCard({ dayGroup }: DayGroupCardProps) {
+function DayGroupCard({ dayGroup, router }: DayGroupCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -323,20 +326,14 @@ function DayGroupCard({ dayGroup }: DayGroupCardProps) {
               key={cluster.id} 
               style={styles.clusterCard}
               onPress={() => {
-                Alert.alert(
-                  cluster.label || 'Unknown Location',
-                  `View ${cluster.assets.length} photos from this location?`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { 
-                      text: 'View Photos', 
-                      onPress: () => {
-                        // TODO: Navigate to AlbumGrid with cluster.assets
-                        Alert.alert('Coming Soon', 'Photo viewer will be implemented in the next update');
-                      }
-                    }
-                  ]
-                );
+                // Navigate to album screen with cluster and dayGroup
+                router.push({
+                  pathname: '/album',
+                  params: {
+                    cluster: JSON.stringify(cluster),
+                    dayGroup: JSON.stringify(dayGroup)
+                  }
+                });
               }}
             >
               <Text style={styles.clusterLabel}>

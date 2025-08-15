@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { databaseService } from '../../src/services/database';
 import { Cluster } from '../../src/types';
 
@@ -25,6 +26,7 @@ interface MapCluster extends Cluster {
 }
 
 export default function MapScreen() {
+  const router = useRouter();
   const [clusters, setClusters] = useState<MapCluster[]>([]);
   const [visibleClusters, setVisibleClusters] = useState<MapCluster[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,29 +126,237 @@ export default function MapScreen() {
       console.log(`Loading assets for cluster ${cluster.id} (expected: ${cluster.assetCount})`);
       
       // Load assets for this cluster on-demand
-      const assets = await databaseService.getAssetsByClusterId(cluster.id);
-      const assetCount = assets.length;
+      let assets = await databaseService.getAssetsByClusterId(cluster.id);
+      let assetCount = assets.length;
       
       console.log(`Found ${assetCount} assets for cluster ${cluster.id}`);
       
-      if (assetCount === 0) {
-        console.warn(`Cluster ${cluster.id} shows ${cluster.assetCount} in database but loaded 0 assets`);
+      // If no assets found by cluster_id, try to find assets by location and date
+      if (assetCount === 0 && cluster.assetCount > 0) {
+        console.log(`Attempting fallback query for cluster ${cluster.id}:`);
+        console.log(`  - Location: ${cluster.centroidLat}, ${cluster.centroidLon}`);
+        console.log(`  - Date: ${cluster.dayDate}`);
+        console.log(`  - Radius: ${cluster.radius}m`);
+        
+        // Also try to debug what assets exist around this area
+        const radiusDegrees = cluster.radius / 111320;
+        console.log(`  - Search radius in degrees: ${radiusDegrees}`);
+        console.log(`  - Lat range: ${cluster.centroidLat - radiusDegrees} to ${cluster.centroidLat + radiusDegrees}`);
+        console.log(`  - Lon range: ${cluster.centroidLon - radiusDegrees} to ${cluster.centroidLon + radiusDegrees}`);
+        
+        // Use a larger radius for fallback to account for clustering precision issues
+        const fallbackRadius = Math.max(cluster.radius * 2, 1000); // At least 1km or 2x cluster radius
+        console.log(`  - Using fallback radius: ${fallbackRadius}m`);
+        
+        assets = await databaseService.getAssetsByLocationAndDate(
+          cluster.centroidLat, 
+          cluster.centroidLon, 
+          cluster.dayDate, 
+          fallbackRadius
+        );
+        assetCount = assets.length;
+        console.log(`Fallback query found ${assetCount} assets for cluster ${cluster.id}`);
+        
+        // If fallback found assets, navigate directly without going through error flow
+        if (assetCount > 0) {
+          console.log(`Fallback successful! Navigating to album with ${assetCount} assets`);
+          
+          const clusterWithAssets: Cluster = {
+            ...cluster,
+            assets
+          };
+          
+          const dayGroup = {
+            date: cluster.dayDate,
+            city: undefined,
+            clusters: [clusterWithAssets],
+            totalAssets: assetCount
+          };
+          
+          router.push({
+            pathname: '/album',
+            params: {
+              cluster: JSON.stringify(clusterWithAssets),
+              dayGroup: JSON.stringify(dayGroup)
+            }
+          });
+          return; // Exit early - navigation successful
+        }
+        
+        // If no assets found but we know there are assets the next day, try timezone fix
+        const nextDay = new Date(cluster.dayDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = nextDay.toISOString().split('T')[0];
+        
+        const assetsOnNextDay = await databaseService.getMediaAssetsByDateRange(nextDayStr, nextDayStr);
+        if (assetsOnNextDay.length > 0) {
+          console.log(`Trying timezone fix: searching ${nextDayStr} instead of ${cluster.dayDate}`);
+          const timezoneFixAssets = await databaseService.getAssetsByLocationAndDate(
+            cluster.centroidLat, 
+            cluster.centroidLon, 
+            nextDayStr, 
+            fallbackRadius
+          );
+          
+          if (timezoneFixAssets.length > 0) {
+            console.log(`Timezone fix successful! Found ${timezoneFixAssets.length} assets`);
+            
+            const clusterWithAssets: Cluster = {
+              ...cluster,
+              assets: timezoneFixAssets
+            };
+            
+            const dayGroup = {
+              date: cluster.dayDate,
+              city: undefined,
+              clusters: [clusterWithAssets],
+              totalAssets: timezoneFixAssets.length
+            };
+            
+            router.push({
+              pathname: '/album',
+              params: {
+                cluster: JSON.stringify(clusterWithAssets),
+                dayGroup: JSON.stringify(dayGroup)
+              }
+            });
+            return; // Exit early - timezone fix navigation successful
+          }
+        }
+        
+        // If still no assets, let's try a broader search to see what's in the database
+        console.log(`Trying broader diagnostic queries...`);
+        const assetsOnDate = await databaseService.getMediaAssetsByDateRange(cluster.dayDate, cluster.dayDate);
+        console.log(`  - Assets on ${cluster.dayDate}: ${assetsOnDate.length}`);
+        
+        // Also check nearby dates in case there's a date conversion issue
+        const dayBefore = new Date(cluster.dayDate);
+        dayBefore.setDate(dayBefore.getDate() - 1);
+        const dayAfter = new Date(cluster.dayDate);
+        dayAfter.setDate(dayAfter.getDate() + 1);
+        
+        const dayBeforeStr = dayBefore.toISOString().split('T')[0];
+        const dayAfterStr = dayAfter.toISOString().split('T')[0];
+        
+        const assetsDayBefore = await databaseService.getMediaAssetsByDateRange(dayBeforeStr, dayBeforeStr);
+        const assetsDayAfter = await databaseService.getMediaAssetsByDateRange(dayAfterStr, dayAfterStr);
+        
+        console.log(`  - Assets on ${dayBeforeStr}: ${assetsDayBefore.length}`);
+        console.log(`  - Assets on ${dayAfterStr}: ${assetsDayAfter.length}`);
+        
+        // Check if there are any assets around those coordinates on any date
+        const allNearbyAssets = await databaseService.getAssetsByLocation(
+          cluster.centroidLat, 
+          cluster.centroidLon, 
+          1000 // 1km radius instead of 300m
+        );
+        console.log(`  - Assets within 1km (any date): ${allNearbyAssets.length}`);
+        
+        // If we find assets at this location, show their actual dates for comparison
+        if (allNearbyAssets.length > 0) {
+          const nearbyDates = [...new Set(allNearbyAssets.map(asset => {
+            // Use the same timezone conversion as the database queries
+            const date = new Date(asset.takenAt);
+            const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+            return localDate.toISOString().split('T')[0];
+          }))].sort();
+          console.log(`  - Dates of nearby assets (local timezone): ${nearbyDates.slice(0, 5).join(', ')}${nearbyDates.length > 5 ? '...' : ''}`);
+          
+          // Also show UTC dates for comparison
+          const utcDates = [...new Set(allNearbyAssets.map(asset => {
+            const date = new Date(asset.takenAt);
+            return date.toISOString().split('T')[0];
+          }))].sort();
+          console.log(`  - Dates of nearby assets (UTC): ${utcDates.slice(0, 5).join(', ')}${utcDates.length > 5 ? '...' : ''}`);
+        }
+        
+        if (assetsOnDate.length > 0) {
+          const nearbyAssets = assetsOnDate.filter(asset => 
+            asset.lat !== null && asset.lon !== null &&
+            Math.abs(asset.lat - cluster.centroidLat) < 0.01 &&  // ~1km
+            Math.abs(asset.lon - cluster.centroidLon) < 0.01
+          );
+          console.log(`  - Assets within 1km on ${cluster.dayDate}: ${nearbyAssets.length}`);
+        }
       }
       
-      Alert.alert(
-        cluster.label || 'Unknown Location',
-        `${assetCount} photos/videos from ${cluster.dayDate}`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'View Album', onPress: () => {
-            if (assetCount > 0) {
-              console.log('Navigate to album with assets:', assets.map(a => a.filename));
-            } else {
-              Alert.alert('No Assets', 'This cluster has no associated photos in the database.');
+      if (assetCount === 0) {
+        console.warn(`Cluster ${cluster.id} shows ${cluster.assetCount} in database but loaded 0 assets even with fallback`);
+        Alert.alert(
+          'No Photos', 
+          'This cluster has no associated photos in the database. Would you like to try repairing the cluster relationships?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Repair Data',
+              onPress: async () => {
+                try {
+                  console.log('Starting database repair...');
+                  await databaseService.repairClusterAssetRelationships();
+                  
+                  // Retry loading assets after repair
+                  console.log(`Retrying asset loading for cluster ${cluster.id} after repair...`);
+                  const repairedAssets = await databaseService.getAssetsByClusterId(cluster.id);
+                  
+                  if (repairedAssets.length > 0) {
+                    console.log(`Repair successful! Found ${repairedAssets.length} assets for cluster ${cluster.id}`);
+                    
+                    // Navigate directly with the repaired assets
+                    const clusterWithAssets: Cluster = {
+                      ...cluster,
+                      assets: repairedAssets
+                    };
+                    
+                    const dayGroup = {
+                      date: cluster.dayDate,
+                      city: undefined,
+                      clusters: [clusterWithAssets],
+                      totalAssets: repairedAssets.length
+                    };
+                    
+                    router.push({
+                      pathname: '/album',
+                      params: {
+                        cluster: JSON.stringify(clusterWithAssets),
+                        dayGroup: JSON.stringify(dayGroup)
+                      }
+                    });
+                  } else {
+                    Alert.alert('Still No Photos', 'Repair completed but no photos were found for this cluster.');
+                  }
+                } catch (error) {
+                  console.error('Repair failed:', error);
+                  Alert.alert('Repair Failed', 'An error occurred during repair. Please try again.');
+                }
+              }
             }
-          }}
-        ]
-      );
+          ]
+        );
+        return;
+      }
+      
+      // Create cluster with loaded assets and navigate to album
+      const clusterWithAssets: Cluster = {
+        ...cluster,
+        assets
+      };
+      
+      // Create a dayGroup for navigation (we only have the date)
+      const dayGroup = {
+        date: cluster.dayDate,
+        city: undefined,
+        clusters: [clusterWithAssets],
+        totalAssets: assetCount
+      };
+      
+      // Navigate to album screen
+      router.push({
+        pathname: '/album',
+        params: {
+          cluster: JSON.stringify(clusterWithAssets),
+          dayGroup: JSON.stringify(dayGroup)
+        }
+      });
     } catch (error) {
       console.error('Failed to load cluster assets:', error);
       Alert.alert('Error', 'Failed to load cluster details');
