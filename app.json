@@ -13,7 +13,8 @@
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to organize your media by location and time.",
         "NSPhotoLibraryAddUsageDescription": "This app needs permission to delete photos from your library when you choose to clean up your media."
-      }
+      },
+      "bundleIdentifier": "com.anonymous.PhotoMap"
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +25,10 @@
       "permissions": [
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "ACCESS_MEDIA_LOCATION"
+        "ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_MEDIA_LOCATION"
       ]
     },
     "web": {

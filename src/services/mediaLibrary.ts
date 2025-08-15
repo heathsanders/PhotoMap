@@ -32,12 +32,22 @@ class MediaLibraryService {
     }
   }
 
-  async scanMediaLibrary(limit = 1000, after?: string): Promise<MediaAsset[]> {
+  async scanMediaLibrary(
+    limit = 1000, 
+    after?: string, 
+    onProgress?: (processed: number, total: number) => void
+  ): Promise<MediaAsset[]> {
     if (!this.hasPermission) {
       throw new Error('Media library permission not granted');
     }
 
     try {
+      console.log(`Starting scan with limit: ${limit}`);
+      
+      // First, let's check permissions more thoroughly
+      const permissions = await MediaLibrary.getPermissionsAsync();
+      console.log('Media permissions status:', permissions);
+      
       const options: MediaLibrary.AssetsOptions = {
         first: limit,
         mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
@@ -45,16 +55,42 @@ class MediaLibraryService {
         after: after,
       };
 
+      console.log('Scan options:', options);
       const result = await MediaLibrary.getAssetsAsync(options);
+      console.log(`Found ${result.assets.length} assets to process out of ${result.totalCount} total assets`);
+      console.log('Has next page:', result.hasNextPage);
+      console.log('End cursor:', result.endCursor);
+      
+      // Check if we're in Expo Go with limited access
+      if (result.totalCount > 0 && result.assets.length < Math.min(50, result.totalCount)) {
+        console.warn('⚠️  LIMITED MEDIA ACCESS: Expo Go can only access a subset of your photos.');
+        console.warn('⚠️  To test full functionality, create a development build with: npx expo run:ios');
+      }
+      
       const mediaAssets: MediaAsset[] = [];
+      const total = result.assets.length;
+      let gpsFoundCount = 0;
 
-      for (const asset of result.assets) {
+      for (let i = 0; i < result.assets.length; i++) {
+        const asset = result.assets[i];
+        
+        if (i % 100 === 0) {
+          console.log(`Processing asset ${i + 1}/${total}`);
+        }
+        
+        onProgress?.(i + 1, total);
+        
         const mediaAsset = await this.convertToMediaAsset(asset);
         if (mediaAsset) {
           mediaAssets.push(mediaAsset);
+          if (mediaAsset.lat && mediaAsset.lon) {
+            gpsFoundCount++;
+          }
         }
       }
 
+      console.log(`Completed processing ${mediaAssets.length} valid assets`);
+      console.log(`GPS data found in ${gpsFoundCount} out of ${mediaAssets.length} assets (${Math.round(gpsFoundCount/mediaAssets.length*100)}%)`);
       return mediaAssets;
     } catch (error) {
       console.error('Error scanning media library:', error);
@@ -116,17 +152,38 @@ class MediaLibraryService {
 
       // Try to get GPS coordinates from EXIF
       if (exif) {
-        if (exif.GPS) {
-          lat = this.parseGPSCoordinate(exif.GPS.GPSLatitude, exif.GPS.GPSLatitudeRef);
-          lon = this.parseGPSCoordinate(exif.GPS.GPSLongitude, exif.GPS.GPSLongitudeRef);
+        // Check for both GPS and {GPS} key structures
+        const gpsData = exif.GPS || exif['{GPS}'];
+        if (gpsData) {
+          lat = this.parseGPSCoordinate(gpsData.GPSLatitude, gpsData.GPSLatitudeRef);
+          lon = this.parseGPSCoordinate(gpsData.GPSLongitude, gpsData.GPSLongitudeRef);
         }
+      }
 
-        // Try to get more accurate timestamp from EXIF
-        if (exif.DateTime) {
-          const exifDate = dayjs(exif.DateTime, 'YYYY:MM:DD HH:mm:ss');
-          if (exifDate.isValid()) {
-            takenAt = exifDate.valueOf();
-          }
+      // FALLBACK: Try assetInfo.location (iOS provides this)
+      if (!lat && !lon && assetInfo.location) {
+        // Handle both string and number formats
+        lat = typeof assetInfo.location.latitude === 'string' 
+          ? parseFloat(assetInfo.location.latitude) 
+          : assetInfo.location.latitude;
+        lon = typeof assetInfo.location.longitude === 'string' 
+          ? parseFloat(assetInfo.location.longitude) 
+          : assetInfo.location.longitude;
+      }
+
+      // DEBUG: Log GPS extraction results occasionally
+      if (Math.random() < 0.005) { // Log 0.5% of assets to reduce spam
+        console.log(`GPS Debug - ${asset.filename}:`);
+        console.log('  EXIF GPS:', !!exif && !!(exif.GPS || exif['{GPS}']));
+        console.log('  iOS location:', !!assetInfo.location);
+        console.log('  Final coords:', lat && lon ? `${lat}, ${lon}` : 'None');
+      }
+
+      // Try to get more accurate timestamp from EXIF
+      if (exif && exif.DateTime) {
+        const exifDate = dayjs(exif.DateTime, 'YYYY:MM:DD HH:mm:ss');
+        if (exifDate.isValid()) {
+          takenAt = exifDate.valueOf();
         }
       }
 
@@ -207,6 +264,65 @@ class MediaLibraryService {
       return newAssets;
     } catch (error) {
       console.error('Error performing incremental scan:', error);
+      throw error;
+    }
+  }
+
+  async getAssetCount(): Promise<number> {
+    try {
+      const result = await MediaLibrary.getAssetsAsync({ first: 1 });
+      return result.totalCount;
+    } catch (error) {
+      console.error('Error getting asset count:', error);
+      return 0;
+    }
+  }
+
+  async scanMediaLibraryPaginated(
+    limit: number,
+    skipCount: number,
+    onProgress?: (processed: number, total: number) => void
+  ): Promise<MediaAsset[]> {
+    if (!this.hasPermission) {
+      throw new Error('Media library permission not granted');
+    }
+
+    try {
+      // Use MediaLibrary's after parameter for pagination
+      // This is a simplified approach - we'll get all assets and skip to the right position
+      const options: MediaLibrary.AssetsOptions = {
+        first: limit + skipCount,
+        mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+        sortBy: MediaLibrary.SortBy.creationTime,
+      };
+
+      const result = await MediaLibrary.getAssetsAsync(options);
+      
+      // Skip the first 'skipCount' assets and take 'limit' assets
+      const assetsToProcess = result.assets.slice(skipCount, skipCount + limit);
+      console.log(`Paginated scan: processing ${assetsToProcess.length} assets (skipped ${skipCount})`);
+      
+      const mediaAssets: MediaAsset[] = [];
+      let gpsFoundCount = 0;
+
+      for (let i = 0; i < assetsToProcess.length; i++) {
+        const asset = assetsToProcess[i];
+        
+        onProgress?.(i + 1, assetsToProcess.length);
+        
+        const mediaAsset = await this.convertToMediaAsset(asset);
+        if (mediaAsset) {
+          mediaAssets.push(mediaAsset);
+          if (mediaAsset.lat && mediaAsset.lon) {
+            gpsFoundCount++;
+          }
+        }
+      }
+
+      console.log(`Paginated batch complete: ${mediaAssets.length} valid assets, ${gpsFoundCount} with GPS`);
+      return mediaAssets;
+    } catch (error) {
+      console.error('Error in paginated media library scan:', error);
       throw error;
     }
   }

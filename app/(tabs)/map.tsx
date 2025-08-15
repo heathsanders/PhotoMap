@@ -1,17 +1,32 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Callout } from 'react-native-maps';
 import { databaseService } from '../../src/services/database';
 import { Cluster } from '../../src/types';
 
+// Conditional import for MapView
+let MapView: any = null;
+let Marker: any = null;
+let Callout: any = null;
+
+try {
+  const maps = require('react-native-maps');
+  MapView = maps.default;
+  Marker = maps.Marker;
+  Callout = maps.Callout;
+} catch (error) {
+  // Maps not available in Expo Go
+}
+
 interface MapCluster extends Cluster {
   markerIdentifier: string;
+  assetCount: number;
 }
 
 export default function MapScreen() {
   const [clusters, setClusters] = useState<MapCluster[]>([]);
+  const [visibleClusters, setVisibleClusters] = useState<MapCluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapRegion, setMapRegion] = useState({
     latitude: 37.78825,
@@ -28,22 +43,18 @@ export default function MapScreen() {
     try {
       setLoading(true);
       
-      // Get all day groups and extract clusters
-      const dayGroups = await databaseService.getAllDayGroups();
-      const allClusters: MapCluster[] = [];
+      // Get clusters optimized for map (without loading all assets)
+      const mapClusters = await databaseService.getAllClustersForMap();
+      const allClusters: MapCluster[] = mapClusters.map(cluster => ({
+        ...cluster,
+        markerIdentifier: `cluster_${cluster.id}`
+      }));
       
-      dayGroups.forEach(dayGroup => {
-        dayGroup.clusters.forEach(cluster => {
-          if (cluster.centroidLat !== 0 && cluster.centroidLon !== 0) {
-            allClusters.push({
-              ...cluster,
-              markerIdentifier: `cluster_${cluster.id}`
-            });
-          }
-        });
-      });
-      
+      console.log(`Loaded ${allClusters.length} clusters for map`);
       setClusters(allClusters);
+      
+      // Initially show top clusters for performance
+      setVisibleClusters(allClusters.slice(0, 100)); // Limit to 100 largest clusters initially
       
       // Calculate optimal map region if we have clusters
       if (allClusters.length > 0) {
@@ -60,12 +71,15 @@ export default function MapScreen() {
         const deltaLat = (maxLat - minLat) * 1.2; // Add 20% padding
         const deltaLon = (maxLon - minLon) * 1.2;
         
-        setMapRegion({
+        const newRegion = {
           latitude: centerLat,
           longitude: centerLon,
           latitudeDelta: Math.max(deltaLat, 0.01), // Minimum zoom level
           longitudeDelta: Math.max(deltaLon, 0.01),
-        });
+        };
+        
+        setMapRegion(newRegion);
+        updateVisibleClusters(newRegion);
       }
     } catch (error) {
       console.error('Failed to load clusters:', error);
@@ -75,16 +89,68 @@ export default function MapScreen() {
     }
   };
 
-  const handleClusterPress = (cluster: MapCluster) => {
-    // TODO: Navigate to album view for this cluster
-    Alert.alert(
-      cluster.label || 'Unknown Location',
-      `${cluster.assets.length} photos/videos from ${cluster.dayDate}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'View Album', onPress: () => {/* Navigate to album */} }
-      ]
+  const updateVisibleClusters = (region: typeof mapRegion) => {
+    // Filter clusters that are within the visible region
+    const padding = 0.1; // Add some padding around the visible area
+    const minLat = region.latitude - region.latitudeDelta / 2 - padding;
+    const maxLat = region.latitude + region.latitudeDelta / 2 + padding;
+    const minLon = region.longitude - region.longitudeDelta / 2 - padding;
+    const maxLon = region.longitude + region.longitudeDelta / 2 + padding;
+
+    const clustersInView = clusters.filter(cluster => 
+      cluster.centroidLat >= minLat && cluster.centroidLat <= maxLat &&
+      cluster.centroidLon >= minLon && cluster.centroidLon <= maxLon
     );
+
+    // Limit based on zoom level (more clusters when zoomed in)
+    const zoomLevel = Math.log2(360 / region.latitudeDelta);
+    let maxClusters = Math.min(200, Math.floor(zoomLevel * 20 + 50)); // Dynamic limit based on zoom
+    
+    // Sort by asset count and take the top ones
+    const topClusters = clustersInView
+      .sort((a, b) => b.assetCount - a.assetCount)
+      .slice(0, maxClusters);
+
+    setVisibleClusters(topClusters);
+  };
+
+  const handleRegionChangeComplete = (region: typeof mapRegion) => {
+    setMapRegion(region);
+    updateVisibleClusters(region);
+  };
+
+  const handleClusterPress = async (cluster: MapCluster) => {
+    try {
+      console.log(`Loading assets for cluster ${cluster.id} (expected: ${cluster.assetCount})`);
+      
+      // Load assets for this cluster on-demand
+      const assets = await databaseService.getAssetsByClusterId(cluster.id);
+      const assetCount = assets.length;
+      
+      console.log(`Found ${assetCount} assets for cluster ${cluster.id}`);
+      
+      if (assetCount === 0) {
+        console.warn(`Cluster ${cluster.id} shows ${cluster.assetCount} in database but loaded 0 assets`);
+      }
+      
+      Alert.alert(
+        cluster.label || 'Unknown Location',
+        `${assetCount} photos/videos from ${cluster.dayDate}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'View Album', onPress: () => {
+            if (assetCount > 0) {
+              console.log('Navigate to album with assets:', assets.map(a => a.filename));
+            } else {
+              Alert.alert('No Assets', 'This cluster has no associated photos in the database.');
+            }
+          }}
+        ]
+      );
+    } catch (error) {
+      console.error('Failed to load cluster assets:', error);
+      Alert.alert('Error', 'Failed to load cluster details');
+    }
   };
 
   if (loading) {
@@ -112,7 +178,41 @@ export default function MapScreen() {
           </TouchableOpacity>
         </View>
 
-        {clusters.length === 0 ? (
+        {!MapView ? (
+          <View style={styles.fallbackContainer}>
+            <Text style={styles.fallbackTitle}>Map Not Available</Text>
+            <Text style={styles.fallbackSubtitle}>
+              Maps require a development build. Use "npx expo run:ios" to enable map functionality.
+            </Text>
+            <Text style={styles.fallbackSubtitle}>
+              In Expo Go, maps are not supported due to native module requirements.
+            </Text>
+            {clusters.length > 0 && (
+              <View style={styles.clusterList}>
+                <Text style={styles.clusterListTitle}>Photo Locations:</Text>
+                {clusters.slice(0, 5).map((cluster) => (
+                  <TouchableOpacity 
+                    key={cluster.markerIdentifier}
+                    style={styles.clusterItem}
+                    onPress={() => handleClusterPress(cluster)}
+                  >
+                    <Text style={styles.clusterItemTitle}>
+                      {cluster.label || 'Unknown Location'}
+                    </Text>
+                    <Text style={styles.clusterItemSubtitle}>
+                      {cluster.assetCount} photos • {cluster.dayDate}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                {clusters.length > 5 && (
+                  <Text style={styles.moreItemsText}>
+                    +{clusters.length - 5} more locations
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        ) : clusters.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyTitle}>No Photo Locations</Text>
             <Text style={styles.emptySubtitle}>
@@ -123,14 +223,14 @@ export default function MapScreen() {
           <MapView
             style={styles.map}
             region={mapRegion}
-            onRegionChangeComplete={setMapRegion}
+            onRegionChangeComplete={handleRegionChangeComplete}
             mapType="standard"
             showsUserLocation={false}
             showsMyLocationButton={false}
             showsCompass={true}
             showsScale={true}
           >
-            {clusters.map((cluster) => (
+            {visibleClusters.map((cluster) => (
               <Marker
                 key={cluster.markerIdentifier}
                 coordinate={{
@@ -142,7 +242,7 @@ export default function MapScreen() {
                 <View style={styles.markerContainer}>
                   <View style={styles.marker}>
                     <Text style={styles.markerText}>
-                      {cluster.assets.length}
+                      {cluster.assetCount}
                     </Text>
                   </View>
                 </View>
@@ -153,7 +253,7 @@ export default function MapScreen() {
                       {cluster.label || 'Unknown Location'}
                     </Text>
                     <Text style={styles.calloutSubtitle}>
-                      {cluster.assets.length} photos • {cluster.dayDate}
+                      {cluster.assetCount} photos • {cluster.dayDate}
                     </Text>
                   </View>
                 </Callout>
@@ -264,5 +364,59 @@ const styles = StyleSheet.create({
   calloutSubtitle: {
     color: '#888888',
     fontSize: 12,
+  },
+  fallbackContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  fallbackTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  fallbackSubtitle: {
+    color: '#888888',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  clusterList: {
+    marginTop: 32,
+    width: '100%',
+  },
+  clusterListTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  clusterItem: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#333333',
+  },
+  clusterItemTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  clusterItemSubtitle: {
+    color: '#888888',
+    fontSize: 14,
+  },
+  moreItemsText: {
+    color: '#007AFF',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

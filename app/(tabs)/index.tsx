@@ -1,19 +1,64 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert, Modal, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { mediaLibraryService } from '../../src/services/mediaLibrary';
 import { databaseService } from '../../src/services/database';
+import { mediaProcessorService } from '../../src/services/mediaProcessor';
 import { DayGroup } from '../../src/types';
 
 export default function TimelineScreen() {
   const [dayGroups, setDayGroups] = useState<DayGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasPermission, setHasPermission] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanMessage, setScanMessage] = useState('');
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [backgroundProcessing, setBackgroundProcessing] = useState(false);
 
   useEffect(() => {
     initializeApp();
-  }, []);
+    checkBackgroundProcessing();
+    
+    // Check background processing status periodically
+    const interval = setInterval(async () => {
+      if (!showProgressModal) { // Only check when not in active scan modal
+        try {
+          const { mediaProcessorService } = await import('../../src/services/mediaProcessor');
+          const isBackgroundRunning = mediaProcessorService.isBackgroundProcessing();
+          
+          if (isBackgroundRunning !== backgroundProcessing) {
+            console.log(`Background processing state changed: ${isBackgroundRunning}`);
+            setBackgroundProcessing(isBackgroundRunning);
+            
+            if (!isBackgroundRunning && backgroundProcessing) {
+              // Background processing just finished
+              await loadDayGroups();
+              setScanMessage('Background processing completed');
+            }
+          }
+        } catch (error) {
+          console.error('Error checking background processing status:', error);
+        }
+      }
+    }, 2000); // Check every 2 seconds
+    
+    return () => clearInterval(interval);
+  }, [backgroundProcessing, showProgressModal]);
+
+  const checkBackgroundProcessing = async () => {
+    try {
+      const { mediaProcessorService } = await import('../../src/services/mediaProcessor');
+      const isBackgroundRunning = mediaProcessorService.isBackgroundProcessing();
+      if (isBackgroundRunning) {
+        setBackgroundProcessing(true);
+        setScanMessage('Resuming background processing...');
+        console.log('Found existing background processing on app start');
+      }
+    } catch (error) {
+      console.error('Error checking background processing:', error);
+    }
+  };
 
   const initializeApp = async () => {
     try {
@@ -41,9 +86,7 @@ export default function TimelineScreen() {
       setHasPermission(granted);
       
       if (granted) {
-        setLoading(true);
         await loadDayGroups();
-        setLoading(false);
       } else {
         Alert.alert(
           'Permission Required',
@@ -71,24 +114,66 @@ export default function TimelineScreen() {
   };
 
   const scanMediaLibrary = async () => {
+    // Prevent multiple scans
+    if (showProgressModal || backgroundProcessing) {
+      Alert.alert(
+        'Scan Already Running', 
+        'A photo scan is already in progress. Please wait for it to complete.'
+      );
+      return;
+    }
+
     try {
-      setLoading(true);
+      setShowProgressModal(true);
+      setScanProgress(0);
+      setScanMessage('Starting batched scan...');
       
-      // Import media processor service
-      const { mediaProcessorService } = await import('../../src/services/mediaProcessor');
+      // Use smaller batches (250 photos) for better responsiveness
+      await mediaProcessorService.performFullScan(
+        (progress, message) => {
+          if (backgroundProcessing) {
+            // We're in background mode, just update the message
+            setScanMessage(message);
+            
+            // Update timeline with new batch results periodically
+            if (message.includes('Background') || message.includes('batch')) {
+              loadDayGroups();
+            }
+          } else {
+            // We're in foreground mode, update progress normally
+            setScanProgress(progress);
+            setScanMessage(message);
+          }
+        },
+        250, // Batch size of 250 photos
+        () => {
+          // First batch complete callback
+          console.log('First batch complete - switching to background mode');
+          setShowProgressModal(false);
+          setBackgroundProcessing(true);
+          loadDayGroups(); // Show first batch results
+          
+          Alert.alert(
+            'First Batch Complete!',
+            'You can now browse your first 250 organized photos. We\'re continuing to process the remaining photos in the background.',
+            [{ text: 'Start Browsing' }]
+          );
+        }
+      );
       
-      await mediaProcessorService.performFullScan((progress, message) => {
-        console.log(`Progress: ${progress}% - ${message}`);
-        // You could show a progress modal here
-      });
-      
-      await loadDayGroups();
-      Alert.alert('Success', 'Photo library scanned and organized successfully!');
+      // Final completion - this only runs when ALL batches are done
+      console.log('All scanning completed - hiding background processing indicator');
+      setBackgroundProcessing(false);
+      await loadDayGroups(); // Final reload
+      Alert.alert(
+        'Scan Complete!', 
+        'All photos have been scanned and organized by location and date.'
+      );
     } catch (error) {
       console.error('Failed to scan media library:', error);
+      setShowProgressModal(false);
+      setBackgroundProcessing(false);
       Alert.alert('Error', 'Failed to scan media library. Please try again.');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -98,7 +183,8 @@ export default function TimelineScreen() {
         <SafeAreaView style={styles.container}>
           <StatusBar style="light" />
           <View style={styles.centerContainer}>
-            <Text style={styles.loadingText}>Loading...</Text>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Initializing PhotoMap...</Text>
           </View>
         </SafeAreaView>
       </SafeAreaProvider>
@@ -134,10 +220,28 @@ export default function TimelineScreen() {
         <StatusBar style="light" />
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Timeline</Text>
-          <TouchableOpacity style={styles.scanButton} onPress={scanMediaLibrary}>
-            <Text style={styles.scanButtonText}>Scan Library</Text>
+          <TouchableOpacity 
+            style={[styles.scanButton, (showProgressModal || backgroundProcessing) && styles.scanButtonDisabled]} 
+            onPress={scanMediaLibrary}
+            disabled={showProgressModal || backgroundProcessing}
+          >
+            <Text style={[
+              styles.scanButtonText,
+              (showProgressModal || backgroundProcessing) && styles.scanButtonDisabledText
+            ]}>
+              {showProgressModal ? 'Scanning...' : backgroundProcessing ? 'Processing...' : 'Scan Library'}
+            </Text>
           </TouchableOpacity>
         </View>
+
+        {backgroundProcessing && (
+          <View style={styles.backgroundProcessingBar}>
+            <ActivityIndicator size="small" color="#007AFF" />
+            <Text style={styles.backgroundProcessingText}>
+              {scanMessage || 'Processing photos in background...'}
+            </Text>
+          </View>
+        )}
         
         <ScrollView style={styles.scrollView}>
           {dayGroups.length === 0 ? (
@@ -153,6 +257,39 @@ export default function TimelineScreen() {
             ))
           )}
         </ScrollView>
+
+        {/* Progress Modal */}
+        <Modal
+          visible={showProgressModal}
+          transparent={true}
+          animationType="fade"
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.progressModal}>
+              <Text style={styles.progressTitle}>Scanning Photo Library</Text>
+              
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { width: `${scanProgress}%` }
+                    ]} 
+                  />
+                </View>
+                <Text style={styles.progressPercent}>{Math.round(scanProgress)}%</Text>
+              </View>
+              
+              <Text style={styles.progressMessage}>{scanMessage}</Text>
+              
+              <ActivityIndicator 
+                size="large" 
+                color="#007AFF" 
+                style={styles.activityIndicator}
+              />
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -179,8 +316,29 @@ function DayGroupCard({ dayGroup }: DayGroupCardProps) {
       
       {expanded && (
         <View style={styles.clustersContainer}>
-          {dayGroup.clusters.map((cluster) => (
-            <TouchableOpacity key={cluster.id} style={styles.clusterCard}>
+          {dayGroup.clusters
+            .filter(cluster => cluster.assets.length > 0)
+            .map((cluster) => (
+            <TouchableOpacity 
+              key={cluster.id} 
+              style={styles.clusterCard}
+              onPress={() => {
+                Alert.alert(
+                  cluster.label || 'Unknown Location',
+                  `View ${cluster.assets.length} photos from this location?`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'View Photos', 
+                      onPress: () => {
+                        // TODO: Navigate to AlbumGrid with cluster.assets
+                        Alert.alert('Coming Soon', 'Photo viewer will be implemented in the next update');
+                      }
+                    }
+                  ]
+                );
+              }}
+            >
               <Text style={styles.clusterLabel}>
                 {cluster.label || 'Unknown Location'}
               </Text>
@@ -229,6 +387,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  scanButtonDisabled: {
+    backgroundColor: '#555555',
+    opacity: 0.6,
+  },
+  scanButtonDisabledText: {
+    opacity: 0.7,
   },
   scrollView: {
     flex: 1,
@@ -322,5 +487,80 @@ const styles = StyleSheet.create({
   clusterInfo: {
     color: '#888888',
     fontSize: 12,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressModal: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 16,
+    padding: 24,
+    margin: 20,
+    minWidth: 280,
+    alignItems: 'center',
+  },
+  progressTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  progressContainer: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: '#333333',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#007AFF',
+    borderRadius: 4,
+  },
+  progressPercent: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  progressMessage: {
+    color: '#CCCCCC',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 12,
+    minHeight: 20,
+  },
+  detailedProgressText: {
+    color: '#999999',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 16,
+    fontFamily: 'monospace',
+  },
+  activityIndicator: {
+    marginTop: 8,
+  },
+  backgroundProcessingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 122, 255, 0.2)',
+  },
+  backgroundProcessingText: {
+    color: '#007AFF',
+    fontSize: 14,
+    marginLeft: 8,
+    flex: 1,
   },
 });

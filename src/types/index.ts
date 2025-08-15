@@ -10,6 +10,7 @@ export interface MediaAsset {
   lon?: number;
   tzOffset?: number; // Timezone offset in minutes
   albumId?: string;
+  clusterId?: string;
   filename: string;
   fileSize?: number;
 }

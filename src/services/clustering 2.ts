@@ -1,14 +1,6 @@
 import { getDistance } from 'geolib';
 import { MediaAsset, Cluster, ClusteringOptions } from '../types';
-
-// Simple UUID v4 generator for React Native
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
+import { v4 as uuidv4 } from 'react-native-uuid';
 
 interface Point {
   asset: MediaAsset;
@@ -18,7 +10,7 @@ interface Point {
 
 class ClusteringService {
   private readonly DEFAULT_RADIUS = 300; // meters
-  private readonly DEFAULT_MIN_POINTS = 1; // Changed from 2 to 1 to include single photos
+  private readonly DEFAULT_MIN_POINTS = 2;
 
   /**
    * Clusters media assets by location using DBSCAN algorithm
@@ -30,20 +22,15 @@ class ClusteringService {
       minPoints: this.DEFAULT_MIN_POINTS
     }
   ): Cluster[] {
-    console.log(`Clustering ${assets.length} assets with radius ${options.radius}m, minPoints ${options.minPoints}`);
-    
     // Filter assets that have GPS coordinates
-    const geotaggedAssets = assets.filter(asset => asset.lat !== undefined && asset.lon !== undefined && asset.lat !== 0 && asset.lon !== 0);
-    const nonGeotaggedAssets = assets.filter(asset => asset.lat === undefined || asset.lon === undefined || asset.lat === 0 || asset.lon === 0);
-
-    console.log(`Found ${geotaggedAssets.length} geotagged assets, ${nonGeotaggedAssets.length} non-geotagged assets`);
+    const geotaggedAssets = assets.filter(asset => asset.lat !== undefined && asset.lon !== undefined);
+    const nonGeotaggedAssets = assets.filter(asset => asset.lat === undefined || asset.lon === undefined);
 
     if (geotaggedAssets.length === 0) {
       // Return a single "No GPS" cluster if no geotagged assets
       if (nonGeotaggedAssets.length > 0) {
-        console.log('Creating single No GPS cluster');
         return [{
-          id: generateUUID(),
+          id: uuidv4(),
           dayDate: this.getDateString(nonGeotaggedAssets[0].takenAt),
           centroidLat: 0,
           centroidLon: 0,
@@ -63,26 +50,23 @@ class ClusteringService {
     const clusters: Cluster[] = [];
     let clusterId = 0;
 
-    // Modified DBSCAN to handle single points better
     for (const point of points) {
       if (point.visited) continue;
 
       point.visited = true;
       const neighbors = this.getNeighbors(point, points, options.radius);
-      
-      // For minPoints = 1, we want every photo to be in a cluster
-      // Either as part of a group or as a single-photo cluster
-      if (neighbors.length + 1 < options.minPoints && options.minPoints > 1) {
-        // Mark as noise (will be handled later) - only if minPoints > 1
+
+      if (neighbors.length < options.minPoints) {
+        // Mark as noise (will be handled later)
         continue;
       }
 
-      // Create new cluster - include the point itself plus neighbors
+      // Create new cluster
       const cluster: Cluster = {
-        id: generateUUID(),
+        id: uuidv4(),
         dayDate: this.getDateString(point.asset.takenAt),
-        centroidLat: point.asset.lat!,
-        centroidLon: point.asset.lon!,
+        centroidLat: 0,
+        centroidLon: 0,
         label: undefined,
         assets: [point.asset],
         radius: options.radius
@@ -91,95 +75,66 @@ class ClusteringService {
       point.clusterId = cluster.id;
       clusterId++;
 
-      // Add neighbors to cluster if they exist
-      if (neighbors.length > 0) {
-        // Expand cluster
-        let i = 0;
-        while (i < neighbors.length) {
-          const neighbor = neighbors[i];
+      // Expand cluster
+      let i = 0;
+      while (i < neighbors.length) {
+        const neighbor = neighbors[i];
+        
+        if (!neighbor.visited) {
+          neighbor.visited = true;
+          const neighborNeighbors = this.getNeighbors(neighbor, points, options.radius);
           
-          if (!neighbor.visited) {
-            neighbor.visited = true;
-            const neighborNeighbors = this.getNeighbors(neighbor, points, options.radius);
-            
-            // Only expand if neighbor has enough neighbors
-            if (neighborNeighbors.length + 1 >= options.minPoints) {
-              // Add new neighbors to the list
-              for (const nn of neighborNeighbors) {
-                if (!neighbors.find(n => n.asset.id === nn.asset.id)) {
-                  neighbors.push(nn);
-                }
+          if (neighborNeighbors.length >= options.minPoints) {
+            // Add new neighbors to the list
+            for (const nn of neighborNeighbors) {
+              if (!neighbors.find(n => n.asset.id === nn.asset.id)) {
+                neighbors.push(nn);
               }
             }
           }
-
-          if (!neighbor.clusterId) {
-            neighbor.clusterId = cluster.id;
-            cluster.assets.push(neighbor.asset);
-          }
-
-          i++;
         }
+
+        if (!neighbor.clusterId) {
+          neighbor.clusterId = cluster.id;
+          cluster.assets.push(neighbor.asset);
+        }
+
+        i++;
       }
 
       clusters.push(cluster);
     }
 
-    // Handle noise points (assets not assigned to any cluster) - only if minPoints > 1
+    // Handle noise points (assets not assigned to any cluster)
     const noiseAssets = points
       .filter(point => !point.clusterId)
       .map(point => point.asset);
 
-    console.log(`Created ${clusters.length} location clusters, ${noiseAssets.length} scattered photos`);
+    // Add non-geotagged assets to noise
+    const allNoiseAssets = [...noiseAssets, ...nonGeotaggedAssets];
 
-    // Create individual clusters for scattered geotagged photos
-    if (noiseAssets.length > 0) {
-      for (const noiseAsset of noiseAssets) {
-        clusters.push({
-          id: generateUUID(),
-          dayDate: this.getDateString(noiseAsset.takenAt),
-          centroidLat: noiseAsset.lat!,
-          centroidLon: noiseAsset.lon!,
-          label: `Location ${noiseAsset.lat!.toFixed(3)}, ${noiseAsset.lon!.toFixed(3)}`,
-          assets: [noiseAsset],
-          radius: 0
-        });
-      }
-    }
-
-    // Add non-geotagged assets as a separate cluster if they exist
-    if (nonGeotaggedAssets.length > 0) {
+    if (allNoiseAssets.length > 0) {
       clusters.push({
-        id: generateUUID(),
-        dayDate: this.getDateString(nonGeotaggedAssets[0].takenAt),
+        id: uuidv4(),
+        dayDate: this.getDateString(allNoiseAssets[0].takenAt),
         centroidLat: 0,
         centroidLon: 0,
-        label: 'No GPS',
-        assets: nonGeotaggedAssets,
+        label: allNoiseAssets.some(a => a.lat !== undefined) ? 'Scattered Locations' : 'No GPS',
+        assets: allNoiseAssets,
         radius: 0
       });
     }
 
-    // Calculate centroids for multi-asset clusters
+    // Calculate centroids for each cluster
     clusters.forEach(cluster => {
-      if (cluster.assets.length > 1) {
-        const geotaggedInCluster = cluster.assets.filter(a => a.lat !== undefined && a.lon !== undefined);
-        if (geotaggedInCluster.length > 0) {
-          cluster.centroidLat = geotaggedInCluster.reduce((sum, asset) => sum + asset.lat!, 0) / geotaggedInCluster.length;
-          cluster.centroidLon = geotaggedInCluster.reduce((sum, asset) => sum + asset.lon!, 0) / geotaggedInCluster.length;
-          
-          // Generate location-based label for multi-photo clusters
-          if (!cluster.label) {
-            cluster.label = `Location ${cluster.centroidLat.toFixed(3)}, ${cluster.centroidLon.toFixed(3)}`;
-          }
-        }
+      const geotaggedInCluster = cluster.assets.filter(a => a.lat !== undefined && a.lon !== undefined);
+      if (geotaggedInCluster.length > 0) {
+        cluster.centroidLat = geotaggedInCluster.reduce((sum, asset) => sum + asset.lat!, 0) / geotaggedInCluster.length;
+        cluster.centroidLon = geotaggedInCluster.reduce((sum, asset) => sum + asset.lon!, 0) / geotaggedInCluster.length;
       }
     });
 
-    const sortedClusters = clusters.sort((a, b) => b.assets.length - a.assets.length);
-    console.log(`Final result: ${sortedClusters.length} clusters total`);
-    
-    return sortedClusters;
+    return clusters.sort((a, b) => b.assets.length - a.assets.length);
   }
 
   /**

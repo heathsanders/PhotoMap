@@ -27,6 +27,7 @@ class DatabaseService {
           lon REAL,
           tz_offset INTEGER,
           album_id TEXT,
+          cluster_id TEXT,
           filename TEXT NOT NULL,
           file_size INTEGER,
           created_at INTEGER DEFAULT (strftime('%s', 'now'))
@@ -68,12 +69,28 @@ class DatabaseService {
         );
       `);
 
+      // Add cluster_id column if it doesn't exist (for existing databases)
+      try {
+        await this.db.execAsync(`ALTER TABLE media_assets ADD COLUMN cluster_id TEXT;`);
+        console.log('Added cluster_id column to existing media_assets table');
+      } catch (error) {
+        // Column likely already exists, ignore error
+        console.log('cluster_id column already exists or other ALTER error:', error);
+      }
+      
       // Create indexes for performance
       await this.db.execAsync(`
         CREATE INDEX IF NOT EXISTS idx_media_taken_at ON media_assets(taken_at);
         CREATE INDEX IF NOT EXISTS idx_media_location ON media_assets(lat, lon);
         CREATE INDEX IF NOT EXISTS idx_clusters_day ON clusters(day_date);
       `);
+      
+      // Create cluster index only if column exists
+      try {
+        await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_media_cluster ON media_assets(cluster_id);`);
+      } catch (error) {
+        console.log('Could not create cluster_id index:', error);
+      }
 
       this.isInitialized = true;
       console.log('Database initialized successfully');
@@ -86,8 +103,8 @@ class DatabaseService {
   async insertMediaAsset(asset: MediaAsset): Promise<void> {
     const query = `
       INSERT OR REPLACE INTO media_assets 
-      (id, uri, type, width, height, duration, taken_at, lat, lon, tz_offset, album_id, filename, file_size)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, uri, type, width, height, duration, taken_at, lat, lon, tz_offset, album_id, cluster_id, filename, file_size)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
     await this.db.runAsync(query, [
@@ -102,6 +119,7 @@ class DatabaseService {
       asset.lon || null,
       asset.tzOffset || null,
       asset.albumId || null,
+      asset.clusterId || null,
       asset.filename,
       asset.fileSize || null
     ]);
@@ -144,7 +162,14 @@ class DatabaseService {
     `;
     
     const result = await this.db.getAllAsync(query, [date]);
-    return result.map(row => this.mapRowToCluster(row));
+    const clusters: Cluster[] = [];
+    
+    for (const row of result) {
+      const cluster = await this.mapRowToClusterWithAssets(row);
+      clusters.push(cluster);
+    }
+    
+    return clusters;
   }
 
   async insertDayGroup(dayGroup: DayGroup): Promise<void> {
@@ -226,12 +251,15 @@ class DatabaseService {
       lon: row.lon || undefined,
       tzOffset: row.tz_offset || undefined,
       albumId: row.album_id || undefined,
+      clusterId: row.cluster_id || undefined,
       filename: row.filename,
       fileSize: row.file_size || undefined
     };
   }
 
-  private mapRowToCluster(row: any): Cluster {
+  private async mapRowToClusterWithAssets(row: any): Promise<Cluster> {
+    const assets = await this.getAssetsByClusterId(row.id);
+    
     return {
       id: row.id,
       dayDate: row.day_date,
@@ -239,8 +267,87 @@ class DatabaseService {
       centroidLon: row.centroid_lon,
       label: row.label || undefined,
       radius: row.radius,
-      assets: [] // Assets will be populated separately
+      assets
     };
+  }
+
+  private mapRowToCluster(row: any): Cluster & { assetCount: number } {
+    return {
+      id: row.id,
+      dayDate: row.day_date,
+      centroidLat: row.centroid_lat,
+      centroidLon: row.centroid_lon,
+      label: row.label || undefined,
+      radius: row.radius,
+      assets: [], // Assets will be populated separately
+      assetCount: row.asset_count || 0
+    };
+  }
+
+  async getAssetsByClusterId(clusterId: string): Promise<MediaAsset[]> {
+    const query = `
+      SELECT * FROM media_assets 
+      WHERE cluster_id = ?
+      ORDER BY taken_at ASC
+    `;
+    
+    const result = await this.db.getAllAsync(query, [clusterId]);
+    return result.map(row => this.mapRowToMediaAsset(row));
+  }
+
+  async getAllClustersForMap(): Promise<Cluster[]> {
+    const query = `
+      SELECT * FROM clusters 
+      WHERE centroid_lat != 0 AND centroid_lon != 0 AND asset_count > 0
+      ORDER BY asset_count DESC
+    `;
+    
+    const result = await this.db.getAllAsync(query);
+    // Return clusters without loading assets for performance
+    return result.map(row => this.mapRowToCluster(row));
+  }
+
+  async verifyClusterAssetsRelationship(): Promise<void> {
+    try {
+      // Count total assets with cluster_id
+      const assetsWithClusters = await this.db.getFirstAsync(
+        'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id IS NOT NULL'
+      );
+      
+      // Count assets without cluster_id  
+      const assetsWithoutClusters = await this.db.getFirstAsync(
+        'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id IS NULL'
+      );
+      
+      console.log(`Assets with cluster_id: ${(assetsWithClusters as any).count}`);
+      console.log(`Assets without cluster_id: ${(assetsWithoutClusters as any).count}`);
+      
+      // Sample a few clusters to check their asset counts
+      const sampleClusters = await this.db.getAllAsync(
+        'SELECT id, asset_count FROM clusters LIMIT 5'
+      );
+      
+      for (const cluster of sampleClusters) {
+        const actualCount = await this.db.getFirstAsync(
+          'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id = ?',
+          [cluster.id]
+        );
+        console.log(`Cluster ${cluster.id}: expected ${cluster.asset_count}, actual ${(actualCount as any).count}`);
+      }
+      
+    } catch (error) {
+      console.error('Error verifying cluster relationships:', error);
+    }
+  }
+
+  async clearAllClusterAssignments(): Promise<void> {
+    try {
+      await this.db.runAsync('UPDATE media_assets SET cluster_id = NULL');
+      await this.db.runAsync('DELETE FROM clusters');
+      console.log('Cleared all cluster assignments');
+    } catch (error) {
+      console.error('Error clearing cluster assignments:', error);
+    }
   }
 }
 
