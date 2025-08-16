@@ -2,11 +2,15 @@ import * as SQLite from 'expo-sqlite';
 import { MediaAsset, DayGroup, Cluster, GeocodeCache } from '../types';
 
 class DatabaseService {
-  private db: SQLite.SQLiteDatabase;
+  private _db: SQLite.SQLiteDatabase;
   private isInitialized = false;
 
   constructor() {
-    this.db = SQLite.openDatabaseSync('photomap.db');
+    this._db = SQLite.openDatabaseSync('photomap.db');
+  }
+
+  get db(): SQLite.SQLiteDatabase {
+    return this._db;
   }
 
   async initialize(): Promise<void> {
@@ -14,7 +18,7 @@ class DatabaseService {
 
     try {
       // Create MediaAssets table
-      await this.db.execAsync(`
+      await this._db.execAsync(`
         CREATE TABLE IF NOT EXISTS media_assets (
           id TEXT PRIMARY KEY,
           uri TEXT NOT NULL,
@@ -36,7 +40,7 @@ class DatabaseService {
       `);
 
       // Create DayGroups table
-      await this.db.execAsync(`
+      await this._db.execAsync(`
         CREATE TABLE IF NOT EXISTS day_groups (
           date TEXT PRIMARY KEY,
           city TEXT,
@@ -46,7 +50,7 @@ class DatabaseService {
       `);
 
       // Create Clusters table
-      await this.db.execAsync(`
+      await this._db.execAsync(`
         CREATE TABLE IF NOT EXISTS clusters (
           id TEXT PRIMARY KEY,
           day_date TEXT NOT NULL,
@@ -61,7 +65,7 @@ class DatabaseService {
       `);
 
       // Create GeocodeCache table
-      await this.db.execAsync(`
+      await this._db.execAsync(`
         CREATE TABLE IF NOT EXISTS geocode_cache (
           key TEXT PRIMARY KEY,
           label TEXT NOT NULL,
@@ -72,7 +76,7 @@ class DatabaseService {
 
       // Add cluster_id column if it doesn't exist (for existing databases)
       try {
-        await this.db.execAsync(`ALTER TABLE media_assets ADD COLUMN cluster_id TEXT;`);
+        await this._db.execAsync(`ALTER TABLE media_assets ADD COLUMN cluster_id TEXT;`);
         console.log('Added cluster_id column to existing media_assets table');
       } catch (error) {
         // Column likely already exists, ignore error
@@ -81,7 +85,7 @@ class DatabaseService {
 
       // Add hidden column if it doesn't exist (for existing databases)
       try {
-        await this.db.execAsync(`ALTER TABLE media_assets ADD COLUMN hidden INTEGER DEFAULT 0;`);
+        await this._db.execAsync(`ALTER TABLE media_assets ADD COLUMN hidden INTEGER DEFAULT 0;`);
         console.log('Added hidden column to existing media_assets table');
       } catch (error) {
         // Column likely already exists, ignore error
@@ -89,7 +93,7 @@ class DatabaseService {
       }
       
       // Create indexes for performance
-      await this.db.execAsync(`
+      await this._db.execAsync(`
         CREATE INDEX IF NOT EXISTS idx_media_taken_at ON media_assets(taken_at);
         CREATE INDEX IF NOT EXISTS idx_media_location ON media_assets(lat, lon);
         CREATE INDEX IF NOT EXISTS idx_clusters_day ON clusters(day_date);
@@ -97,7 +101,7 @@ class DatabaseService {
       
       // Create cluster index only if column exists
       try {
-        await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_media_cluster ON media_assets(cluster_id);`);
+        await this._db.execAsync(`CREATE INDEX IF NOT EXISTS idx_media_cluster ON media_assets(cluster_id);`);
       } catch (error) {
         console.log('Could not create cluster_id index:', error);
       }
@@ -117,7 +121,7 @@ class DatabaseService {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     
-    await this.db.runAsync(query, [
+    await this._db.runAsync(query, [
       asset.id,
       asset.uri,
       asset.type,
@@ -143,7 +147,7 @@ class DatabaseService {
       ORDER BY taken_at ASC
     `;
     
-    const result = await this.db.getAllAsync(query, [startDate, endDate]);
+    const result = await this._db.getAllAsync(query, [startDate, endDate]);
     return result.map(row => this.mapRowToMediaAsset(row));
   }
 
@@ -155,7 +159,7 @@ class DatabaseService {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
     
-    await this.db.runAsync(clusterQuery, [
+    await this._db.runAsync(clusterQuery, [
       cluster.id,
       cluster.dayDate,
       cluster.centroidLat,
@@ -174,7 +178,7 @@ class DatabaseService {
       `;
       
       const assetIds = cluster.assets.map(asset => asset.id);
-      await this.db.runAsync(updateAssetsQuery, [cluster.id, ...assetIds]);
+      await this._db.runAsync(updateAssetsQuery, [cluster.id, ...assetIds]);
     }
   }
 
@@ -186,7 +190,7 @@ class DatabaseService {
       ORDER BY asset_count DESC
     `;
     
-    const result = await this.db.getAllAsync(query, [date]);
+    const result = await this._db.getAllAsync(query, [date]);
     const clusters: Cluster[] = [];
     
     for (const row of result) {
@@ -207,7 +211,7 @@ class DatabaseService {
       VALUES (?, ?, ?)
     `;
     
-    await this.db.runAsync(query, [
+    await this._db.runAsync(query, [
       dayGroup.date,
       dayGroup.city || null,
       dayGroup.totalAssets
@@ -220,7 +224,7 @@ class DatabaseService {
       ORDER BY date DESC
     `;
     
-    const result = await this.db.getAllAsync(query);
+    const result = await this._db.getAllAsync(query);
     const dayGroups: DayGroup[] = [];
     
     for (const row of result) {
@@ -246,19 +250,19 @@ class DatabaseService {
   async deleteMediaAssets(assetIds: string[]): Promise<void> {
     const placeholders = assetIds.map(() => '?').join(',');
     const query = `DELETE FROM media_assets WHERE id IN (${placeholders})`;
-    await this.db.runAsync(query, assetIds);
+    await this._db.runAsync(query, assetIds);
   }
 
   async hideMediaAssets(assetIds: string[]): Promise<void> {
     const placeholders = assetIds.map(() => '?').join(',');
     const query = `UPDATE media_assets SET hidden = 1 WHERE id IN (${placeholders})`;
-    await this.db.runAsync(query, assetIds);
+    await this._db.runAsync(query, assetIds);
   }
 
   async unhideMediaAssets(assetIds: string[]): Promise<void> {
     const placeholders = assetIds.map(() => '?').join(',');
     const query = `UPDATE media_assets SET hidden = 0 WHERE id IN (${placeholders})`;
-    await this.db.runAsync(query, assetIds);
+    await this._db.runAsync(query, assetIds);
   }
 
   async updateClusterAssetCounts(): Promise<void> {
@@ -272,7 +276,7 @@ class DatabaseService {
         AND (media_assets.hidden IS NULL OR media_assets.hidden = 0)
       )
     `;
-    await this.db.runAsync(query);
+    await this._db.runAsync(query);
   }
 
   async updateClusterAssetCount(clusterId: string): Promise<void> {
@@ -287,7 +291,7 @@ class DatabaseService {
       )
       WHERE id = ?
     `;
-    await this.db.runAsync(query, [clusterId, clusterId]);
+    await this._db.runAsync(query, [clusterId, clusterId]);
   }
 
   async removeEmptyClusters(): Promise<void> {
@@ -301,7 +305,7 @@ class DatabaseService {
         AND (hidden IS NULL OR hidden = 0)
       )
     `;
-    await this.db.runAsync(query);
+    await this._db.runAsync(query);
   }
 
   async removeEmptyCluster(clusterId: string): Promise<boolean> {
@@ -312,12 +316,12 @@ class DatabaseService {
       WHERE cluster_id = ? 
       AND (hidden IS NULL OR hidden = 0)
     `;
-    const result = await this.db.getFirstAsync(countQuery, [clusterId]);
+    const result = await this._db.getFirstAsync(countQuery, [clusterId]);
     const assetCount = (result as any)?.count || 0;
     
     if (assetCount === 0) {
       const deleteQuery = `DELETE FROM clusters WHERE id = ?`;
-      await this.db.runAsync(deleteQuery, [clusterId]);
+      await this._db.runAsync(deleteQuery, [clusterId]);
       return true; // Cluster was deleted
     }
     
@@ -334,7 +338,7 @@ class DatabaseService {
         WHERE asset_count > 0
       )
     `;
-    await this.db.runAsync(query);
+    await this._db.runAsync(query);
   }
 
   async cacheGeocode(key: string, label: string, city?: string): Promise<void> {
@@ -344,12 +348,12 @@ class DatabaseService {
       VALUES (?, ?, ?, ?)
     `;
     
-    await this.db.runAsync(query, [key, label, city || null, Date.now()]);
+    await this._db.runAsync(query, [key, label, city || null, Date.now()]);
   }
 
   async getCachedGeocode(key: string): Promise<GeocodeCache | null> {
     const query = `SELECT * FROM geocode_cache WHERE key = ?`;
-    const result = await this.db.getFirstAsync(query, [key]);
+    const result = await this._db.getFirstAsync(query, [key]);
     
     if (!result) return null;
     
@@ -415,7 +419,7 @@ class DatabaseService {
       ORDER BY taken_at ASC
     `;
     
-    const result = await this.db.getAllAsync(query, [clusterId]);
+    const result = await this._db.getAllAsync(query, [clusterId]);
     return result.map(row => this.mapRowToMediaAsset(row));
   }
 
@@ -439,7 +443,7 @@ class DatabaseService {
       ORDER BY taken_at ASC
     `;
     
-    const result = await this.db.getAllAsync(query, [
+    const result = await this._db.getAllAsync(query, [
       dayDate,
       centroidLat - radiusDegrees,
       centroidLat + radiusDegrees,
@@ -467,7 +471,7 @@ class DatabaseService {
       ORDER BY taken_at ASC
     `;
     
-    const result = await this.db.getAllAsync(query, [
+    const result = await this._db.getAllAsync(query, [
       centroidLat - radiusDegrees,
       centroidLat + radiusDegrees,
       centroidLon - radiusDegrees,
@@ -484,7 +488,7 @@ class DatabaseService {
       ORDER BY asset_count DESC
     `;
     
-    const result = await this.db.getAllAsync(query);
+    const result = await this._db.getAllAsync(query);
     // Return clusters without loading assets for performance
     return result.map(row => this.mapRowToCluster(row));
   }
@@ -492,12 +496,12 @@ class DatabaseService {
   async verifyClusterAssetsRelationship(): Promise<void> {
     try {
       // Count total assets with cluster_id
-      const assetsWithClusters = await this.db.getFirstAsync(
+      const assetsWithClusters = await this._db.getFirstAsync(
         'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id IS NOT NULL'
       );
       
       // Count assets without cluster_id  
-      const assetsWithoutClusters = await this.db.getFirstAsync(
+      const assetsWithoutClusters = await this._db.getFirstAsync(
         'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id IS NULL'
       );
       
@@ -505,12 +509,12 @@ class DatabaseService {
       console.log(`Assets without cluster_id: ${(assetsWithoutClusters as any).count}`);
       
       // Sample a few clusters to check their asset counts
-      const sampleClusters = await this.db.getAllAsync(
+      const sampleClusters = await this._db.getAllAsync(
         'SELECT id, asset_count FROM clusters LIMIT 5'
       );
       
       for (const cluster of sampleClusters) {
-        const actualCount = await this.db.getFirstAsync(
+        const actualCount = await this._db.getFirstAsync(
           'SELECT COUNT(*) as count FROM media_assets WHERE cluster_id = ?',
           [cluster.id]
         );
@@ -527,14 +531,14 @@ class DatabaseService {
       console.log('Starting cluster-asset relationship repair...');
       
       // Get all clusters
-      const clusters = await this.db.getAllAsync('SELECT * FROM clusters');
+      const clusters = await this._db.getAllAsync('SELECT * FROM clusters');
       let repairedCount = 0;
       
       for (const clusterRow of clusters) {
         // For each cluster, find assets by location and date
         const radiusDegrees = clusterRow.radius / 111320; // Convert meters to degrees
         
-        const assets = await this.db.getAllAsync(`
+        const assets = await this._db.getAllAsync(`
           SELECT id FROM media_assets 
           WHERE lat IS NOT NULL AND lon IS NOT NULL
             AND date(taken_at / 1000, 'unixepoch', 'localtime') = ?
@@ -557,10 +561,10 @@ class DatabaseService {
           `;
           
           const assetIds = assets.map((asset: any) => asset.id);
-          await this.db.runAsync(updateQuery, [clusterRow.id, ...assetIds]);
+          await this._db.runAsync(updateQuery, [clusterRow.id, ...assetIds]);
           
           // Update cluster asset_count
-          await this.db.runAsync(
+          await this._db.runAsync(
             'UPDATE clusters SET asset_count = ? WHERE id = ?',
             [assets.length, clusterRow.id]
           );
@@ -578,8 +582,8 @@ class DatabaseService {
 
   async clearAllClusterAssignments(): Promise<void> {
     try {
-      await this.db.runAsync('UPDATE media_assets SET cluster_id = NULL');
-      await this.db.runAsync('DELETE FROM clusters');
+      await this._db.runAsync('UPDATE media_assets SET cluster_id = NULL');
+      await this._db.runAsync('DELETE FROM clusters');
       console.log('Cleared all cluster assignments');
     } catch (error) {
       console.error('Error clearing cluster assignments:', error);

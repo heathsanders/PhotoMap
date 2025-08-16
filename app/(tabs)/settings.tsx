@@ -190,6 +190,56 @@ export default function SettingsScreen() {
       subtitle: '1.0.0',
       type: 'info',
     },
+    {
+      id: 'dev-section',
+      title: 'Developer',
+      type: 'info',
+    },
+    {
+      id: 'dev-pro-toggle',
+      title: 'Enable Pro Features (Dev)',
+      subtitle: 'Toggle Pro features for testing - Development only',
+      type: 'toggle',
+      value: settings.isPro,
+      onChange: async (value: boolean) => {
+        try {
+          await updateSetting('isPro', value);
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update Pro status');
+        }
+      },
+    },
+    {
+      id: 'dev-clear-geocache',
+      title: 'Clear Location Cache (Dev)',
+      subtitle: 'Clear cached location names to test fresh geocoding',
+      type: 'button',
+      onPress: async () => {
+        Alert.alert(
+          'Clear Location Cache',
+          'This will clear all cached location names. New scans will fetch fresh location data.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Clear',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  const { geocodingService } = await import('../../src/services/geocoding');
+                  await geocodingService.clearExpiredCache();
+                  // Clear all cache, not just expired
+                  const { databaseService } = await import('../../src/services/database');
+                  await databaseService.db.runAsync('DELETE FROM geocode_cache');
+                  Alert.alert('Success', 'Location cache cleared. Re-scan to get fresh location names.');
+                } catch (error) {
+                  Alert.alert('Error', 'Failed to clear location cache');
+                }
+              }
+            }
+          ]
+        );
+      },
+    },
   ];
 
   const renderSettingItem = (item: SettingsItem) => {

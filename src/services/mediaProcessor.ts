@@ -2,6 +2,7 @@ import { mediaLibraryService } from './mediaLibrary';
 import { databaseService } from './database';
 import { clusteringService } from './clustering';
 import { settingsService } from './settings';
+import { geocodingService } from './geocoding';
 import { MediaAsset, DayGroup, Cluster } from '../types';
 import dayjs from 'dayjs';
 
@@ -370,13 +371,22 @@ class MediaProcessorService {
       return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
     }
     
-    // This is a simplified version - in production you'd use a geocoding service
-    // For now, just return a placeholder based on coordinates
-    // In the real app, this would call a reverse geocoding service like:
-    // - Google Maps Geocoding API
-    // - MapBox Geocoding API
-    // - Or use the geocoding cache from databaseService
-    return `Location ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+    // Use the real geocoding service
+    try {
+      // Request location permissions if needed (this is safe to call multiple times)
+      const hasPermission = await geocodingService.requestPermissions();
+      if (!hasPermission) {
+        console.log('Location permission denied, falling back to coordinates');
+        return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+      }
+
+      const locationName = await geocodingService.getLocationName(lat, lon);
+      return locationName;
+    } catch (error) {
+      console.error('Geocoding failed:', error);
+      // Fallback to coordinates
+      return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
   }
 
   async deleteAssets(assetIds: string[]): Promise<{ success: boolean; deletedIds: string[]; failedIds: string[] }> {
