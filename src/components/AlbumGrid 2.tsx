@@ -9,8 +9,7 @@ import {
   Alert,
   Image,
   ActionSheetIOS,
-  Platform,
-  Modal
+  Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -18,7 +17,6 @@ import * as Sharing from 'expo-sharing';
 import { MediaAsset, Cluster, DayGroup } from '../types';
 import { mediaLibraryService } from '../services/mediaLibrary';
 import { databaseService } from '../services/database';
-import MediaViewer from './MediaViewer';
 
 const { width: screenWidth } = Dimensions.get('window');
 const GRID_COLUMNS = 3;
@@ -44,10 +42,6 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  
-  // MediaViewer state
-  const [showMediaViewer, setShowMediaViewer] = useState(false);
-  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
 
   useEffect(() => {
     loadAssets();
@@ -106,14 +100,9 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
     if (multiSelectMode) {
       toggleAssetSelection(index);
     } else {
-      // Open MediaViewer
-      setMediaViewerIndex(index);
-      setShowMediaViewer(true);
+      // TODO: Navigate to media viewer
+      Alert.alert('Media Viewer', `View ${asset.filename} in fullscreen mode`);
     }
-  };
-
-  const closeMediaViewer = () => {
-    setShowMediaViewer(false);
   };
 
   const handleAssetLongPress = (index: number) => {
@@ -196,24 +185,9 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
         // Remove from database
         await databaseService.deleteMediaAssets(assetIds);
         
-        // Update cluster asset count in database
-        await databaseService.updateClusterAssetCount(cluster.id);
-        
-        // Check if cluster is now empty and remove it if so
-        const clusterDeleted = await databaseService.removeEmptyCluster(cluster.id);
-        
         // Update local state
         setAssets(prevAssets => prevAssets.filter(asset => !asset.selected));
         setMultiSelectMode(false);
-        
-        // If cluster was deleted, clean up empty day groups and navigate back immediately
-        if (clusterDeleted) {
-          await databaseService.removeEmptyDayGroups();
-          // Notify parent component that assets have changed and navigate back
-          onAssetsChanged?.();
-          Alert.alert('Success', `Deleted ${result.deletedIds.length} items. This location cluster has been removed.`);
-          return; // Skip the normal success alert
-        }
         
         // Notify parent component that assets have changed
         onAssetsChanged?.();
@@ -222,29 +196,10 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
       } else if (result.deletedIds.length > 0) {
         // Partial success
         await databaseService.deleteMediaAssets(result.deletedIds);
-        
-        // Update cluster asset count in database
-        await databaseService.updateClusterAssetCount(cluster.id);
-        
-        // Check if cluster is now empty and remove it if so
-        const clusterDeleted = await databaseService.removeEmptyCluster(cluster.id);
-        
         setAssets(prevAssets => 
           prevAssets.filter(asset => !result.deletedIds.includes(asset.id))
         );
         setMultiSelectMode(false);
-        
-        // If cluster was deleted, clean up empty day groups and show special message
-        if (clusterDeleted) {
-          await databaseService.removeEmptyDayGroups();
-          // Notify parent component that assets have changed and navigate back
-          onAssetsChanged?.();
-          Alert.alert('Partial Success', `Deleted ${result.deletedIds.length} of ${assetIds.length} items. This location cluster has been removed.`);
-          return; // Skip the normal partial success alert
-        }
-        
-        // Notify parent component that assets have changed
-        onAssetsChanged?.();
         
         Alert.alert(
           'Partial Success',
@@ -272,28 +227,9 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
       
       if (result.deletedIds.length > 0) {
         await databaseService.deleteMediaAssets(result.deletedIds);
-        
-        // Update cluster asset count in database
-        await databaseService.updateClusterAssetCount(cluster.id);
-        
-        // Check if cluster is now empty and remove it if so
-        const clusterDeleted = await databaseService.removeEmptyCluster(cluster.id);
-        
         setAssets(prevAssets => 
           prevAssets.filter(asset => !result.deletedIds.includes(asset.id))
         );
-        
-        // If cluster was deleted, clean up empty day groups and navigate back
-        if (clusterDeleted) {
-          await databaseService.removeEmptyDayGroups();
-          // Notify parent component that assets have changed and navigate back
-          onAssetsChanged?.();
-          Alert.alert('Success', `Deleted ${result.deletedIds.length} additional items. This location cluster has been removed.`);
-          return; // Skip the normal success alert
-        }
-        
-        // Notify parent component that assets have changed
-        onAssetsChanged?.();
         
         Alert.alert('Success', `Deleted ${result.deletedIds.length} additional items`);
       }
@@ -389,27 +325,9 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
               const assetIds = selectedAssets.map(asset => asset.id);
               await databaseService.hideMediaAssets(assetIds);
               
-              // Update cluster asset count in database
-              await databaseService.updateClusterAssetCount(cluster.id);
-              
-              // Check if cluster is now empty and remove it if so
-              const clusterDeleted = await databaseService.removeEmptyCluster(cluster.id);
-              
               // Remove from local state
               setAssets(prevAssets => prevAssets.filter(asset => !asset.selected));
               setMultiSelectMode(false);
-              
-              // If cluster was deleted, clean up empty day groups and navigate back
-              if (clusterDeleted) {
-                await databaseService.removeEmptyDayGroups();
-                // Notify parent component that assets have changed and navigate back
-                onAssetsChanged?.();
-                Alert.alert('Success', `Hidden ${selectedAssets.length} items. This location cluster has been removed.`);
-                return; // Skip the normal success alert
-              }
-              
-              // Notify parent component that assets have changed
-              onAssetsChanged?.();
               
               Alert.alert('Success', `Hidden ${selectedAssets.length} items`);
             } catch (error) {
@@ -785,20 +703,6 @@ export default function AlbumGrid({ cluster, dayGroup, onBack, isPro = false, on
           ) : null
         }
       />
-
-      {/* MediaViewer Modal */}
-      <Modal
-        visible={showMediaViewer}
-        animationType="fade"
-        presentationStyle="fullScreen"
-      >
-        <MediaViewer
-          assets={assets}
-          initialIndex={mediaViewerIndex}
-          onClose={closeMediaViewer}
-          isPro={isPro}
-        />
-      </Modal>
     </SafeAreaView>
   );
 }

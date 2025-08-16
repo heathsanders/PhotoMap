@@ -12,6 +12,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Slider from '@react-native-community/slider';
 import UpgradeModal from '../../src/components/UpgradeModal';
+import { useTheme } from '../../src/contexts/ThemeContext';
 
 interface SettingsItem {
   id: string;
@@ -28,16 +29,9 @@ interface SettingsItem {
 }
 
 export default function SettingsScreen() {
-  const [isPro, setIsPro] = useState(false);
+  const { theme, settings, updateSetting, updateSettings, isDark } = useTheme();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeFeature, setUpgradeFeature] = useState<string>();
-  
-  // Settings state
-  const [clusterRadius, setClusterRadius] = useState(300);
-  const [minPhotosPerCluster, setMinPhotosPerCluster] = useState(2);
-  const [reverseGeocodingEnabled, setReverseGeocodingEnabled] = useState(false);
-  const [tripViewEnabled, setTripViewEnabled] = useState(false);
-  const [theme, setTheme] = useState('dark');
 
   const handleLockedFeature = (featureName: string) => {
     setUpgradeFeature(featureName);
@@ -50,7 +44,25 @@ export default function SettingsScreen() {
     setShowUpgradeModal(false);
   };
 
-  const settings: SettingsItem[] = [
+  const handleThemeChange = () => {
+    if (!settings.isPro) {
+      handleLockedFeature('Light Theme');
+      return;
+    }
+    
+    // Show theme picker for Pro users
+    Alert.alert(
+      'Choose Theme',
+      'Select your preferred theme',
+      [
+        { text: 'Dark', onPress: () => updateSetting('theme', 'dark') },
+        { text: 'Light', onPress: () => updateSetting('theme', 'light') },
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
+
+  const settingsItems: SettingsItem[] = [
     {
       id: 'clustering-section',
       title: 'Clustering',
@@ -59,37 +71,45 @@ export default function SettingsScreen() {
     {
       id: 'cluster-radius',
       title: 'Cluster Radius',
-      subtitle: `${clusterRadius}m - How close photos need to be to group together`,
+      subtitle: `${settings.clusterRadius}m - How close photos need to be to group together`,
       type: 'slider',
-      value: clusterRadius,
+      value: settings.clusterRadius,
       min: 50,
       max: 2000,
       step: 50,
-      locked: !isPro,
-      onChange: (value: number) => {
-        if (!isPro) {
+      locked: !settings.isPro,
+      onChange: async (value: number) => {
+        if (!settings.isPro) {
           handleLockedFeature('Adjustable Clustering');
           return;
         }
-        setClusterRadius(value);
+        try {
+          await updateSetting('clusterRadius', value);
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update cluster radius');
+        }
       },
     },
     {
       id: 'min-photos',
       title: 'Minimum Photos per Cluster',
-      subtitle: `${minPhotosPerCluster} photos - Minimum number to form a cluster`,
+      subtitle: `${settings.minPhotosPerCluster} photos - Minimum number to form a cluster`,
       type: 'slider',
-      value: minPhotosPerCluster,
+      value: settings.minPhotosPerCluster,
       min: 1,
       max: 10,
       step: 1,
-      locked: !isPro,
-      onChange: (value: number) => {
-        if (!isPro) {
+      locked: !settings.isPro,
+      onChange: async (value: number) => {
+        if (!settings.isPro) {
           handleLockedFeature('Adjustable Clustering');
           return;
         }
-        setMinPhotosPerCluster(value);
+        try {
+          await updateSetting('minPhotosPerCluster', value);
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update minimum photos per cluster');
+        }
       },
     },
     {
@@ -102,14 +122,13 @@ export default function SettingsScreen() {
       title: 'Location Names',
       subtitle: 'Show POI and city names instead of coordinates',
       type: 'toggle',
-      value: reverseGeocodingEnabled,
-      locked: !isPro,
-      onChange: (value: boolean) => {
-        if (!isPro) {
-          handleLockedFeature('Location Names');
-          return;
+      value: settings.reverseGeocodingEnabled,
+      onChange: async (value: boolean) => {
+        try {
+          await updateSetting('reverseGeocodingEnabled', value);
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update location names setting');
         }
-        setReverseGeocodingEnabled(value);
       },
     },
     {
@@ -120,17 +139,12 @@ export default function SettingsScreen() {
     {
       id: 'theme',
       title: 'Theme',
-      subtitle: isPro ? 'Light/Dark themes available' : 'Dark theme only (Pro: Light theme)',
+      subtitle: settings.isPro 
+        ? `Current: ${settings.theme === 'dark' ? 'Dark' : 'Light'} theme`
+        : 'Dark theme only (Pro: Light theme)',
       type: 'button',
-      locked: !isPro,
-      onPress: () => {
-        if (!isPro) {
-          handleLockedFeature('Light Theme');
-          return;
-        }
-        // Show theme picker
-        Alert.alert('Theme', 'Theme picker would be shown here');
-      },
+      locked: !settings.isPro,
+      onPress: handleThemeChange,
     },
     {
       id: 'organization-section',
@@ -142,14 +156,18 @@ export default function SettingsScreen() {
       title: 'Trip View',
       subtitle: 'Group photos across multiple days for trips',
       type: 'toggle',
-      value: tripViewEnabled,
-      locked: !isPro,
-      onChange: (value: boolean) => {
-        if (!isPro) {
+      value: settings.tripViewEnabled,
+      locked: !settings.isPro,
+      onChange: async (value: boolean) => {
+        if (!settings.isPro) {
           handleLockedFeature('Trip View');
           return;
         }
-        setTripViewEnabled(value);
+        try {
+          await updateSetting('tripViewEnabled', value);
+        } catch (error) {
+          Alert.alert('Error', 'Failed to update trip view setting');
+        }
       },
     },
     {
@@ -178,8 +196,8 @@ export default function SettingsScreen() {
     switch (item.type) {
       case 'info':
         return (
-          <View key={item.id} style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{item.title}</Text>
+          <View key={item.id} style={dynamicStyles.sectionHeader}>
+            <Text style={dynamicStyles.sectionTitle}>{item.title}</Text>
           </View>
         );
 
@@ -187,24 +205,27 @@ export default function SettingsScreen() {
         return (
           <TouchableOpacity
             key={item.id}
-            style={styles.settingRow}
+            style={dynamicStyles.settingRow}
             onPress={() => item.onChange && item.onChange(!item.value)}
             disabled={item.locked}
           >
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingTitle, item.locked && styles.lockedText]}>
+            <View style={dynamicStyles.settingContent}>
+              <Text style={[dynamicStyles.settingTitle, item.locked && dynamicStyles.lockedText]}>
                 {item.title}
                 {item.locked && ' 🔒'}
               </Text>
               {item.subtitle && (
-                <Text style={styles.settingSubtitle}>{item.subtitle}</Text>
+                <Text style={dynamicStyles.settingSubtitle}>{item.subtitle}</Text>
               )}
             </View>
             <Switch
               value={item.value}
               onValueChange={item.onChange}
               disabled={item.locked}
-              trackColor={{ false: '#3e3e3e', true: '#007AFF' }}
+              trackColor={{ 
+                false: isDark ? '#3e3e3e' : '#C7C7CC', 
+                true: theme.accent 
+              }}
               thumbColor={item.value ? '#FFFFFF' : '#f4f3f4'}
             />
           </TouchableOpacity>
@@ -212,28 +233,28 @@ export default function SettingsScreen() {
 
       case 'slider':
         return (
-          <View key={item.id} style={styles.settingRow}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingTitle, item.locked && styles.lockedText]}>
+          <View key={item.id} style={dynamicStyles.settingRow}>
+            <View style={dynamicStyles.settingContent}>
+              <Text style={[dynamicStyles.settingTitle, item.locked && dynamicStyles.lockedText]}>
                 {item.title}
                 {item.locked && ' 🔒'}
               </Text>
               {item.subtitle && (
-                <Text style={styles.settingSubtitle}>{item.subtitle}</Text>
+                <Text style={dynamicStyles.settingSubtitle}>{item.subtitle}</Text>
               )}
             </View>
-            <View style={styles.sliderContainer}>
+            <View style={dynamicStyles.sliderContainer}>
               <Slider
-                style={styles.slider}
+                style={dynamicStyles.slider}
                 minimumValue={item.min}
                 maximumValue={item.max}
                 step={item.step}
                 value={item.value}
                 onValueChange={item.onChange}
                 disabled={item.locked}
-                minimumTrackTintColor={item.locked ? '#666666' : '#007AFF'}
-                maximumTrackTintColor="#3e3e3e"
-                thumbStyle={{ backgroundColor: item.locked ? '#666666' : '#007AFF' }}
+                minimumTrackTintColor={item.locked ? theme.textSecondary : theme.accent}
+                maximumTrackTintColor={theme.border}
+                thumbStyle={{ backgroundColor: item.locked ? theme.textSecondary : theme.accent }}
               />
             </View>
           </View>
@@ -243,20 +264,20 @@ export default function SettingsScreen() {
         return (
           <TouchableOpacity
             key={item.id}
-            style={styles.settingRow}
+            style={dynamicStyles.settingRow}
             onPress={item.onPress}
             disabled={item.locked}
           >
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingTitle, item.locked && styles.lockedText]}>
+            <View style={dynamicStyles.settingContent}>
+              <Text style={[dynamicStyles.settingTitle, item.locked && dynamicStyles.lockedText]}>
                 {item.title}
                 {item.locked && ' 🔒'}
               </Text>
               {item.subtitle && (
-                <Text style={styles.settingSubtitle}>{item.subtitle}</Text>
+                <Text style={dynamicStyles.settingSubtitle}>{item.subtitle}</Text>
               )}
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Text style={dynamicStyles.chevron}>›</Text>
           </TouchableOpacity>
         );
 
@@ -265,37 +286,141 @@ export default function SettingsScreen() {
     }
   };
 
+  // Create dynamic styles based on theme
+  const dynamicStyles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    headerTitle: {
+      color: theme.text,
+      fontSize: 28,
+      fontWeight: 'bold',
+    },
+    upgradeButton: {
+      backgroundColor: theme.secondary,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 8,
+    },
+    upgradeButtonText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    scrollView: {
+      flex: 1,
+    },
+    proCallout: {
+      backgroundColor: `${theme.secondary}33`, // 20% opacity
+      margin: 20,
+      padding: 20,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.secondary,
+    },
+    proCalloutTitle: {
+      color: theme.secondary,
+      fontSize: 18,
+      fontWeight: '600',
+      marginBottom: 8,
+    },
+    proCalloutText: {
+      color: theme.text,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    sectionHeader: {
+      paddingHorizontal: 20,
+      paddingTop: 20,
+      paddingBottom: 8,
+    },
+    sectionTitle: {
+      color: theme.accent,
+      fontSize: 16,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+    },
+    settingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.border,
+    },
+    settingContent: {
+      flex: 1,
+      marginRight: 16,
+    },
+    settingTitle: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '500',
+      marginBottom: 2,
+    },
+    lockedText: {
+      color: theme.textSecondary,
+    },
+    settingSubtitle: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      lineHeight: 18,
+    },
+    sliderContainer: {
+      width: 120,
+    },
+    slider: {
+      width: 120,
+      height: 40,
+    },
+    chevron: {
+      color: theme.textSecondary,
+      fontSize: 20,
+      fontWeight: '300',
+    },
+  });
+
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.container}>
-        <StatusBar style="light" />
+      <SafeAreaView style={dynamicStyles.container}>
+        <StatusBar style={isDark ? "light" : "dark"} />
         
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Settings</Text>
-          {!isPro && (
+        <View style={dynamicStyles.header}>
+          <Text style={dynamicStyles.headerTitle}>Settings</Text>
+          {!settings.isPro && (
             <TouchableOpacity
-              style={styles.upgradeButton}
+              style={dynamicStyles.upgradeButton}
               onPress={() => setShowUpgradeModal(true)}
             >
-              <Text style={styles.upgradeButtonText}>Upgrade to Pro</Text>
+              <Text style={dynamicStyles.upgradeButtonText}>Upgrade to Pro</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        <ScrollView style={styles.scrollView}>
-          {!isPro && (
+        <ScrollView style={dynamicStyles.scrollView}>
+          {!settings.isPro && (
             <TouchableOpacity
-              style={styles.proCallout}
+              style={dynamicStyles.proCallout}
               onPress={() => setShowUpgradeModal(true)}
             >
-              <Text style={styles.proCalloutTitle}>✨ Unlock Pro Features</Text>
-              <Text style={styles.proCalloutText}>
+              <Text style={dynamicStyles.proCalloutTitle}>✨ Unlock Pro Features</Text>
+              <Text style={dynamicStyles.proCalloutText}>
                 Get adjustable clustering, location names, batch actions, and more
               </Text>
             </TouchableOpacity>
           )}
 
-          {settings.map(renderSettingItem)}
+          {settingsItems.map(renderSettingItem)}
         </ScrollView>
 
         <UpgradeModal
@@ -309,105 +434,3 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333333',
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: 'bold',
-  },
-  upgradeButton: {
-    backgroundColor: '#FF9500',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  upgradeButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  proCallout: {
-    backgroundColor: 'rgba(255, 149, 0, 0.2)',
-    margin: 20,
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FF9500',
-  },
-  proCalloutTitle: {
-    color: '#FF9500',
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  proCalloutText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  sectionHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 8,
-  },
-  sectionTitle: {
-    color: '#007AFF',
-    fontSize: 16,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#333333',
-  },
-  settingContent: {
-    flex: 1,
-    marginRight: 16,
-  },
-  settingTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 2,
-  },
-  lockedText: {
-    color: '#888888',
-  },
-  settingSubtitle: {
-    color: '#888888',
-    fontSize: 14,
-    lineHeight: 18,
-  },
-  sliderContainer: {
-    width: 120,
-  },
-  slider: {
-    width: 120,
-    height: 40,
-  },
-  chevron: {
-    color: '#666666',
-    fontSize: 20,
-    fontWeight: '300',
-  },
-});

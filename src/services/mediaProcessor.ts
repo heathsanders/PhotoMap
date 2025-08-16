@@ -1,6 +1,7 @@
 import { mediaLibraryService } from './mediaLibrary';
 import { databaseService } from './database';
 import { clusteringService } from './clustering';
+import { settingsService } from './settings';
 import { MediaAsset, DayGroup, Cluster } from '../types';
 import dayjs from 'dayjs';
 
@@ -10,6 +11,14 @@ class MediaProcessorService {
   private batchProcessing = false;
   private currentBatch = 0;
   private totalBatches = 0;
+
+  private async getClusteringOptions() {
+    const settings = await settingsService.getUserSettings();
+    return {
+      radius: settings.clusterRadius,
+      minPoints: settings.minPhotosPerCluster,
+    };
+  }
 
   async performFullScan(
     onProgress?: (progress: number, message: string) => void,
@@ -227,7 +236,8 @@ class MediaProcessorService {
         if (existing) {
           // Merge clusters and re-cluster the day
           const allAssetsForDay = [...existing.clusters.flatMap(c => c.assets), ...dayGroup.clusters.flatMap(c => c.assets)];
-          const newClusters = clusteringService.clusterByLocation(allAssetsForDay);
+          const clusteringOptions = await this.getClusteringOptions();
+          const newClusters = clusteringService.clusterByLocation(allAssetsForDay, clusteringOptions);
           
           dayGroup.clusters = newClusters;
           dayGroup.totalAssets = allAssetsForDay.length;
@@ -300,11 +310,12 @@ class MediaProcessorService {
     
     for (const [date, assets] of assetsByDay) {
       // Cluster assets for this day
-      const clusters = clusteringService.clusterByLocation(assets);
+      const clusteringOptions = await this.getClusteringOptions();
+      const clusters = clusteringService.clusterByLocation(assets, clusteringOptions);
       
       // Determine the majority city for the day
-      const cities = assets
-        .map(asset => this.getCityFromCoordinates(asset.lat, asset.lon))
+      const cityPromises = assets.map(asset => this.getCityFromCoordinates(asset.lat, asset.lon));
+      const cities = (await Promise.all(cityPromises))
         .filter(city => city !== null);
       
       const cityCount = new Map<string, number>();
@@ -349,12 +360,22 @@ class MediaProcessorService {
     }
   }
 
-  private getCityFromCoordinates(lat?: number, lon?: number): string | null {
-    // This is a simplified version - in production you'd use a geocoding service
+  private async getCityFromCoordinates(lat?: number, lon?: number): Promise<string | null> {
     if (!lat || !lon) return null;
     
+    const settings = await settingsService.getUserSettings();
+    
+    // If reverse geocoding is disabled, return coordinate-based location
+    if (!settings.reverseGeocodingEnabled) {
+      return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
+    
+    // This is a simplified version - in production you'd use a geocoding service
     // For now, just return a placeholder based on coordinates
-    // In the real app, this would call a reverse geocoding service
+    // In the real app, this would call a reverse geocoding service like:
+    // - Google Maps Geocoding API
+    // - MapBox Geocoding API
+    // - Or use the geocoding cache from databaseService
     return `Location ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
   }
 

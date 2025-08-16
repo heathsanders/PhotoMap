@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,12 +6,13 @@ import {
   TouchableOpacity,
   Dimensions,
   Animated,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
-import { Video } from 'expo-av';
-import { PanGestureHandler, PinchGestureHandler, State } from 'react-native-gesture-handler';
+import { VideoView } from 'expo-video';
+import { PanGestureHandler, PinchGestureHandler, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { MediaAsset } from '../types';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -33,12 +34,27 @@ export default function MediaViewer({
   const [showControls, setShowControls] = useState(true);
   const [showMetadata, setShowMetadata] = useState(false);
   
-  // Animation values for pan and zoom
-  const scale = useRef(new Animated.Value(1)).current;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
+  // FlatList ref for programmatic navigation
+  const flatListRef = useRef<FlatList>(null);
+  
+  // Animation values for pan and zoom (per item)
+  const scaleValues = useRef(assets.map(() => new Animated.Value(1))).current;
+  const translateXValues = useRef(assets.map(() => new Animated.Value(0))).current;
+  const translateYValues = useRef(assets.map(() => new Animated.Value(0))).current;
   
   const currentAsset = assets[currentIndex];
+
+  useEffect(() => {
+    // Scroll to initial index when component mounts
+    if (flatListRef.current && initialIndex > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({ 
+          index: initialIndex, 
+          animated: false 
+        });
+      }, 100);
+    }
+  }, [initialIndex]);
 
   const toggleControls = () => {
     setShowControls(!showControls);
@@ -54,31 +70,45 @@ export default function MediaViewer({
 
   const navigateToNext = () => {
     if (currentIndex < assets.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-      resetZoom();
+      const nextIndex = currentIndex + 1;
+      flatListRef.current?.scrollToIndex({ index: nextIndex, animated: true });
+      setCurrentIndex(nextIndex);
+      resetZoom(nextIndex);
     }
   };
 
   const navigateToPrevious = () => {
     if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-      resetZoom();
+      const prevIndex = currentIndex - 1;
+      flatListRef.current?.scrollToIndex({ index: prevIndex, animated: true });
+      setCurrentIndex(prevIndex);
+      resetZoom(prevIndex);
     }
   };
 
-  const resetZoom = () => {
+  const onViewableItemsChanged = ({ viewableItems }: any) => {
+    if (viewableItems.length > 0) {
+      const newIndex = viewableItems[0].index;
+      if (newIndex !== currentIndex) {
+        setCurrentIndex(newIndex);
+        setShowMetadata(false); // Hide metadata when changing items
+      }
+    }
+  };
+
+  const resetZoom = (index: number = currentIndex) => {
     Animated.parallel([
-      Animated.timing(scale, {
+      Animated.timing(scaleValues[index], {
         toValue: 1,
         duration: 200,
         useNativeDriver: true,
       }),
-      Animated.timing(translateX, {
+      Animated.timing(translateXValues[index], {
         toValue: 0,
         duration: 200,
         useNativeDriver: true,
       }),
-      Animated.timing(translateY, {
+      Animated.timing(translateYValues[index], {
         toValue: 0,
         duration: 200,
         useNativeDriver: true,
@@ -86,16 +116,16 @@ export default function MediaViewer({
     ]).start();
   };
 
-  const onPinchGestureEvent = Animated.event(
-    [{ nativeEvent: { scale: scale } }],
+  const createPinchGestureEvent = (index: number) => Animated.event(
+    [{ nativeEvent: { scale: scaleValues[index] } }],
     { useNativeDriver: true }
   );
 
-  const onPanGestureEvent = Animated.event(
+  const createPanGestureEvent = (index: number) => Animated.event(
     [{ 
       nativeEvent: { 
-        translationX: translateX,
-        translationY: translateY 
+        translationX: translateXValues[index],
+        translationY: translateYValues[index] 
       } 
     }],
     { useNativeDriver: true }
@@ -125,51 +155,80 @@ export default function MediaViewer({
     return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
   };
 
-  const renderMedia = () => {
-    if (currentAsset.type === 'video') {
+  const formatAspectRatio = (width: number, height: number): string => {
+    const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+    const divisor = gcd(width, height);
+    return `${width / divisor}:${height / divisor}`;
+  };
+
+  const formatTimezone = (tzOffset?: number): string => {
+    if (!tzOffset) return 'Unknown';
+    const hours = Math.floor(Math.abs(tzOffset) / 60);
+    const minutes = Math.abs(tzOffset) % 60;
+    const sign = tzOffset >= 0 ? '+' : '-';
+    return `UTC${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  };
+
+  const renderMediaItem = ({ item, index }: { item: MediaAsset; index: number }) => {
+    if (item.type === 'video') {
       return (
-        <Video
-          source={{ uri: currentAsset.uri }}
-          style={styles.media}
-          useNativeControls
-          resizeMode="contain"
-          shouldPlay={false}
-        />
+        <View style={styles.mediaContainer}>
+          <VideoView
+            style={styles.media}
+            player={{ uri: item.uri }}
+            allowsFullscreen
+            allowsPictureInPicture={false}
+            showsTimecodes
+            contentFit="contain"
+          />
+          <TouchableOpacity 
+            style={styles.tapOverlay} 
+            onPress={toggleControls}
+            activeOpacity={1}
+          />
+        </View>
       );
     }
 
     return (
-      <PinchGestureHandler onGestureEvent={onPinchGestureEvent}>
-        <Animated.View style={styles.mediaContainer}>
-          <PanGestureHandler onGestureEvent={onPanGestureEvent}>
-            <Animated.View
-              style={[
-                styles.mediaContainer,
-                {
-                  transform: [
-                    { scale: scale },
-                    { translateX: translateX },
-                    { translateY: translateY },
-                  ],
-                },
-              ]}
-            >
-              <Image
-                source={{ uri: currentAsset.uri }}
-                style={styles.media}
-                contentFit="contain"
-                onTouchEnd={toggleControls}
-              />
-            </Animated.View>
-          </PanGestureHandler>
-        </Animated.View>
-      </PinchGestureHandler>
+      <View style={styles.mediaContainer}>
+        <PinchGestureHandler onGestureEvent={createPinchGestureEvent(index)}>
+          <Animated.View style={styles.zoomContainer}>
+            <PanGestureHandler onGestureEvent={createPanGestureEvent(index)}>
+              <Animated.View
+                style={[
+                  styles.panContainer,
+                  {
+                    transform: [
+                      { scale: scaleValues[index] },
+                      { translateX: translateXValues[index] },
+                      { translateY: translateYValues[index] },
+                    ],
+                  },
+                ]}
+              >
+                <Image
+                  source={{ uri: item.uri }}
+                  style={styles.media}
+                  contentFit="contain"
+                />
+                <TouchableOpacity 
+                  style={styles.tapOverlay} 
+                  onPress={toggleControls}
+                  activeOpacity={1}
+                />
+              </Animated.View>
+            </PanGestureHandler>
+          </Animated.View>
+        </PinchGestureHandler>
+      </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" hidden={!showControls} />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" hidden={!showControls} />
       
       {showControls && (
         <View style={styles.topControls}>
@@ -198,9 +257,24 @@ export default function MediaViewer({
       )}
 
       <View style={styles.mediaWrapper}>
-        {renderMedia()}
+        <FlatList
+          ref={flatListRef}
+          data={assets}
+          renderItem={renderMediaItem}
+          keyExtractor={(item) => item.id}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+          getItemLayout={(data, index) => ({
+            length: screenWidth,
+            offset: screenWidth * index,
+            index,
+          })}
+        />
         
-        {/* Navigation areas */}
+        {/* Navigation areas - still useful for tap navigation */}
         <TouchableOpacity
           style={[styles.navArea, styles.leftNavArea]}
           onPress={navigateToPrevious}
@@ -245,16 +319,58 @@ export default function MediaViewer({
               </View>
               
               {isPro ? (
-                <View style={styles.metadataRow}>
-                  <Text style={styles.metadataLabel}>Location:</Text>
-                  <Text style={styles.metadataValue}>
-                    {formatCoordinates(currentAsset.lat, currentAsset.lon)}
-                  </Text>
-                </View>
+                <>
+                  <View style={styles.metadataRow}>
+                    <Text style={styles.metadataLabel}>Aspect Ratio:</Text>
+                    <Text style={styles.metadataValue}>
+                      {formatAspectRatio(currentAsset.width, currentAsset.height)}
+                    </Text>
+                  </View>
+                  
+                  {currentAsset.tzOffset && (
+                    <View style={styles.metadataRow}>
+                      <Text style={styles.metadataLabel}>Timezone:</Text>
+                      <Text style={styles.metadataValue}>
+                        {formatTimezone(currentAsset.tzOffset)}
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {currentAsset.duration && (
+                    <View style={styles.metadataRow}>
+                      <Text style={styles.metadataLabel}>Duration:</Text>
+                      <Text style={styles.metadataValue}>
+                        {Math.floor(currentAsset.duration / 60)}m {Math.floor(currentAsset.duration % 60)}s
+                      </Text>
+                    </View>
+                  )}
+                  
+                  <View style={styles.metadataRow}>
+                    <Text style={styles.metadataLabel}>Location:</Text>
+                    <Text style={styles.metadataValue}>
+                      {formatCoordinates(currentAsset.lat, currentAsset.lon)}
+                    </Text>
+                  </View>
+                  
+                  {/* Map Preview for Pro users */}
+                  {currentAsset.lat && currentAsset.lon && (
+                    <View style={styles.mapPreviewContainer}>
+                      <Text style={styles.mapPreviewTitle}>Location Preview</Text>
+                      <View style={styles.mapPreview}>
+                        <Text style={styles.mapPlaceholder}>
+                          🗺️ Map preview would show here
+                        </Text>
+                        <Text style={styles.mapCoordinates}>
+                          {currentAsset.lat.toFixed(4)}°, {currentAsset.lon.toFixed(4)}°
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </>
               ) : (
                 <View style={styles.proFeature}>
                   <Text style={styles.proFeatureText}>
-                    🔒 Full EXIF data and location details available in Pro
+                    🔒 Full EXIF data, location details, and map preview available in Pro
                   </Text>
                 </View>
               )}
@@ -262,7 +378,8 @@ export default function MediaViewer({
           )}
         </View>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -340,13 +457,30 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   mediaContainer: {
+    width: screenWidth,
+    height: screenHeight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  zoomContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  panContainer: {
     justifyContent: 'center',
     alignItems: 'center',
   },
   media: {
     width: screenWidth,
     height: screenHeight,
+  },
+  tapOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   navArea: {
     position: 'absolute',
@@ -413,5 +547,36 @@ const styles = StyleSheet.create({
     color: '#FF9500',
     fontSize: 14,
     textAlign: 'center',
+  },
+  mapPreviewContainer: {
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    paddingTop: 16,
+  },
+  mapPreviewTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  mapPreview: {
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 12,
+    height: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  mapPlaceholder: {
+    color: '#888888',
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  mapCoordinates: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    opacity: 0.8,
   },
 });
