@@ -1450,57 +1450,8 @@ PODS:
     - React-jsiexecutor
     - React-RCTFBReactNativeSpec
     - ReactCommon/turbomodule/core
-  - react-native-maps (1.25.3):
-    - react-native-maps/Maps (= 1.25.3)
-  - react-native-maps/Generated (1.25.3):
-    - DoubleConversion
-    - glog
-    - hermes-engine
-    - RCT-Folly (= 2024.11.18.00)
-    - RCTRequired
-    - RCTTypeSafety
+  - react-native-maps (1.20.1):
     - React-Core
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-hermes
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - Yoga
-  - react-native-maps/Maps (1.25.3):
-    - DoubleConversion
-    - glog
-    - hermes-engine
-    - RCT-Folly (= 2024.11.18.00)
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-hermes
-    - React-ImageManager
-    - React-jsi
-    - react-native-maps/Generated
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - Yoga
   - react-native-safe-area-context (5.4.0):
     - DoubleConversion
     - glog
@@ -1576,7 +1527,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - react-native-slider (4.5.7):
+  - react-native-slider (4.5.6):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -1591,7 +1542,7 @@ PODS:
     - React-hermes
     - React-ImageManager
     - React-jsi
-    - react-native-slider/common (= 4.5.7)
+    - react-native-slider/common (= 4.5.6)
     - React-NativeModulesApple
     - React-RCTFabric
     - React-renderercss
@@ -1601,7 +1552,7 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
-  - react-native-slider/common (4.5.7):
+  - react-native-slider/common (4.5.6):
     - DoubleConversion
     - glog
     - hermes-engine
@@ -2567,9 +2518,9 @@ SPEC CHECKSUMS:
   React-logger: 85fa3509931497c72ccd2547fcc91e7299d8591e
   React-Mapbuffer: 96a2f2a176268581733be182fa6eebab1c0193be
   React-microtasksnativemodule: bda561d2648e1e52bd9e5a87f8889836bdbde2e2
-  react-native-maps: 50994008072637228c3bc261630a99f848c5c52b
+  react-native-maps: 9febd31278b35cd21e4fad2cf6fa708993be5dab
   react-native-safe-area-context: 562163222d999b79a51577eda2ea8ad2c32b4d06
-  react-native-slider: bbaef403486de7d0ecb35ea7d4f3f236609c15c7
+  react-native-slider: 78ccabe016aef7418b1a846b31115b4165c4dde6
   react-native-webview: 520bcb79c3f2af91e157cdd695732a34ab5f25c8
   React-NativeModulesApple: 1ecb83880dd11baf2228f8dd89d8419c387e03ad
   React-oscompat: 0592889a9fcf0eacb205532028e4a364e22907dd
